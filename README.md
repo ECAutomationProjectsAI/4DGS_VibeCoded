@@ -84,11 +84,40 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
 **For RunPod users experiencing NumPy issues:**
+
+RunPod environments can have pre-installed PyTorch that conflicts with our NumPy requirements. Try this more aggressive fix:
+
 ```bash
-# If you get NumPy compatibility errors, fix with:
+# Method 1: Force downgrade NumPy system-wide
 conda activate gs4d
+pip uninstall numpy -y
 conda install numpy=1.24.3 -c conda-forge --force-reinstall
+pip install numpy==1.24.3 --force-reinstall
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
+If that doesn't work, use the RunPod-native installation:
+
+```bash
+# Method 2: Use RunPod's pre-installed PyTorch
+# Don't create conda environment, use base environment
+cd 4DGS_VibeCoded
+pip install -r requirements_runpod.txt --force-reinstall
+pip install gsplat==0.1.11
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
+**Method 3: Nuclear option for persistent issues:**
+```bash
+# Completely rebuild the environment
+conda remove --name gs4d --all -y
+conda create -n gs4d python=3.10 -y
+conda activate gs4d
+# Install only essential packages
+pip install numpy==1.24.3
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements_runpod.txt
+pip install gsplat==0.1.11
 ```
 
 **Alternative manual conda setup:**
@@ -282,8 +311,29 @@ The system produces high-quality dynamic 3D reconstructions that can be:
 
 ### NumPy Compatibility Error
 If you see "A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x":
+
+**For RunPod environments:**
 ```bash
-# Fix NumPy version
+# Try these solutions in order:
+
+# Solution 1: Force downgrade
+conda activate gs4d
+pip uninstall numpy -y
+pip install numpy==1.24.3 --force-reinstall
+
+# Solution 2: Skip conda, use base environment
+cd 4DGS_VibeCoded
+pip install -r requirements_runpod.txt --force-reinstall
+
+# Solution 3: Clean install
+conda remove --name gs4d --all -y
+conda create -n gs4d python=3.10 numpy=1.24.3 -y
+conda activate gs4d
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+```
+
+**For other environments:**
+```bash
 conda activate gs4d
 conda install numpy=1.24.3 -c conda-forge --force-reinstall
 ```
