@@ -49,15 +49,43 @@
 
 ### Steps
 
+#### Option A: Using Conda (Recommended)
 ```bash
 # 1. Clone repository
-git clone <repository-url>
+git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
+cd 4dgs-project
+
+# 2. Create conda environment from file (includes all dependencies)
+conda env create -f environment.yml
+conda activate gs4d
+
+# 3. Verify installation
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
+**Alternative manual conda setup:**
+```bash
+# Create environment manually
+conda create -n gs4d python=3.10 -y
+conda activate gs4d
+
+# Install PyTorch with CUDA
+conda install pytorch==2.2.2 torchvision==0.17.2 pytorch-cuda=12.1 -c pytorch -c nvidia
+
+# Install other dependencies
+pip install -r requirements.txt
+pip install gsplat==0.1.11
+```
+
+#### Option B: Using venv
+```bash
+# 1. Clone repository
+git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
 cd 4dgs-project
 
 # 2. Create virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
-# OR
 venv\Scripts\activate     # Windows
 
 # 3. Install PyTorch with CUDA

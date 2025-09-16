@@ -42,14 +42,28 @@ else
     HAS_CUDA=0
 fi
 
-# Create virtual environment
-if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv venv
+# Check if using conda
+if command -v conda &> /dev/null; then
+    echo "Conda detected. Creating conda environment..."
+    # Create conda environment if it doesn't exist
+    if ! conda env list | grep -q "gs4d"; then
+        conda create -n gs4d python=3.10 -y
+    fi
+    # Activate conda environment
+    source $(conda info --base)/etc/profile.d/conda.sh
+    conda activate gs4d
+    USING_CONDA=1
+else
+    echo "Conda not detected. Using venv..."
+    # Create virtual environment
+    if [ ! -d "venv" ]; then
+        echo "Creating virtual environment..."
+        python3 -m venv venv
+    fi
+    # Activate virtual environment
+    source venv/bin/activate
+    USING_CONDA=0
 fi
-
-# Activate virtual environment
-source venv/bin/activate
 
 # Upgrade pip
 echo "Upgrading pip..."
@@ -57,10 +71,20 @@ pip install --upgrade pip setuptools wheel
 
 # Install PyTorch with CUDA if available
 echo "Installing PyTorch..."
-if [ $HAS_CUDA -eq 1 ]; then
-    pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
+if [ $USING_CONDA -eq 1 ]; then
+    # Use conda for PyTorch installation
+    if [ $HAS_CUDA -eq 1 ]; then
+        conda install pytorch==2.2.2 torchvision==0.17.2 pytorch-cuda=12.1 -c pytorch -c nvidia -y
+    else
+        conda install pytorch==2.2.2 torchvision==0.17.2 cpuonly -c pytorch -y
+    fi
 else
-    pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cpu
+    # Use pip for PyTorch installation
+    if [ $HAS_CUDA -eq 1 ]; then
+        pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
+    else
+        pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cpu
+    fi
 fi
 
 # Install requirements
@@ -116,7 +140,11 @@ echo "Installation Complete!"
 echo "=========================================="
 echo ""
 echo "To activate the environment:"
-echo "  source venv/bin/activate"
+if [ $USING_CONDA -eq 1 ]; then
+    echo "  conda activate gs4d"
+else
+    echo "  source venv/bin/activate"
+fi
 echo ""
 echo "Quick start:"
 echo "  1. Process a video:"
