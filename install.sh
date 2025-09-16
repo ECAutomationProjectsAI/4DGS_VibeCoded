@@ -1,27 +1,15 @@
 #!/bin/bash
 # 4D Gaussian Splatting Installation Script
-# Supports Linux, WSL2, and RunPod environments
+# Optimized for RunPod and similar GPU cloud environments
 
 set -e  # Exit on error
 
 echo "=========================================="
 echo "4D Gaussian Splatting Installation Script"
 echo "=========================================="
-
-# Detect environment
-if [ -f /run/secrets/kubernetes.io/serviceaccount/token ]; then
-    echo "Detected: RunPod environment"
-    ENV_TYPE="runpod"
-elif grep -q Microsoft /proc/version 2>/dev/null; then
-    echo "Detected: WSL2 environment"
-    ENV_TYPE="wsl2"
-elif [ "$(uname)" == "Linux" ]; then
-    echo "Detected: Linux environment"
-    ENV_TYPE="linux"
-else
-    echo "Detected: Unknown environment"
-    ENV_TYPE="unknown"
-fi
+echo ""
+echo "Optimized for: runpod/pytorch:2.8.0-py3.11-cuda12.8.1"
+echo ""
 
 # Check Python version
 PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
@@ -42,68 +30,31 @@ else
     HAS_CUDA=0
 fi
 
-# Check if using conda
-if command -v conda &> /dev/null; then
-    echo "Conda detected. Creating conda environment..."
-    # Create conda environment if it doesn't exist
-    if ! conda env list | grep -q "gs4d"; then
-        conda create -n gs4d python=3.10 -y
-    fi
-    # Activate conda environment
-    source $(conda info --base)/etc/profile.d/conda.sh
-    conda activate gs4d
-    USING_CONDA=1
-else
-    echo "Conda not detected. Using venv..."
-    # Create virtual environment
-    if [ ! -d "venv" ]; then
-        echo "Creating virtual environment..."
-        python3 -m venv venv
-    fi
-    # Activate virtual environment
-    source venv/bin/activate
-    USING_CONDA=0
+# Make sure we're not in a conda environment
+if [[ ! -z "${CONDA_DEFAULT_ENV}" ]]; then
+    echo "Deactivating conda environment: $CONDA_DEFAULT_ENV"
+    conda deactivate
 fi
+
+# Check PyTorch is available (should be pre-installed in RunPod)
+echo "Checking PyTorch installation..."
+python3 -c "import torch; print(f'PyTorch version: {torch.__version__}')" || {
+    echo "Warning: PyTorch not found. This script is optimized for RunPod environments."
+    echo "Installing PyTorch manually..."
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+}
 
 # Upgrade pip
 echo "Upgrading pip..."
 pip install --upgrade pip setuptools wheel
 
-# Install PyTorch with CUDA if available
-echo "Installing PyTorch..."
-if [ $USING_CONDA -eq 1 ]; then
-    # Use conda for PyTorch installation
-    if [ $HAS_CUDA -eq 1 ]; then
-        conda install pytorch==2.2.2 torchvision==0.17.2 pytorch-cuda=12.1 -c pytorch -c nvidia -y
-    else
-        conda install pytorch==2.2.2 torchvision==0.17.2 cpuonly -c pytorch -y
-    fi
-else
-    # Use pip for PyTorch installation
-    if [ $HAS_CUDA -eq 1 ]; then
-        pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
-    else
-        pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cpu
-    fi
-fi
-
 # Install requirements
 echo "Installing requirements..."
-pip install -r requirements.txt || {
-    echo "Installing requirements individually..."
-    pip install 'numpy<2.0'
-    pip install 'imageio>=2.9.0'
-    pip install 'imageio-ffmpeg>=0.4.5'
-    pip install 'opencv-python>=4.5.0'
-    pip install 'Pillow>=9.0.0'
-    pip install 'scipy>=1.7.0'
-    pip install 'scikit-learn>=0.24.0'
-    pip install 'tqdm>=4.62.0'
-    pip install 'PyYAML>=5.4.0'
-    pip install 'pandas>=1.3.0'
-    pip install 'h5py>=3.0.0'
-    pip install 'matplotlib>=3.3.0'
-}
+echo "Installing NumPy 1.24.3 first for compatibility..."
+pip install numpy==1.24.3 --force-reinstall
+
+echo "Installing other dependencies..."
+pip install -r requirements_runpod.txt --force-reinstall
 
 # Install gsplat for CUDA acceleration
 if [ $HAS_CUDA -eq 1 ]; then
@@ -139,23 +90,15 @@ echo "=========================================="
 echo "Installation Complete!"
 echo "=========================================="
 echo ""
-echo "To activate the environment:"
-if [ $USING_CONDA -eq 1 ]; then
-    echo "  conda activate gs4d"
-else
-    echo "  source venv/bin/activate"
-fi
-echo ""
 echo "Quick start:"
 echo "  1. Process a video:"
 echo "     python tools/preprocess_video.py your_video.mp4 -o dataset/"
 echo ""
 echo "  2. Train the model:"
-echo "     python tools/train.py --data_root dataset/ --out_dir model/"
+echo "     python tools/train.py --data_root dataset/ --out_dir model/ --renderer fast"
 echo ""
 echo "  3. Render results:"
-echo "     python tools/render.py --checkpoint model/model_final.pt --out_dir renders/"
+echo "     python tools/render.py --data_root dataset/ --ckpt model/model_final.pt --out_dir renders/"
 echo ""
-echo "For Docker usage, run:"
-echo "  docker build -t gs4d:latest ."
+echo "Note: No environment activation needed - just run commands directly!"
 echo ""

@@ -1,7 +1,7 @@
 # Core dependencies
-numpy<2.0
-# torch and torchvision should be installed separately with CUDA support:
-# pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
+numpy==1.24.3  # Fixed version for PyTorch compatibility
+# Note: PyTorch should be pre-installed in RunPod environments
+# If not, install with: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 # Image/Video processing
 imageio>=2.9.0

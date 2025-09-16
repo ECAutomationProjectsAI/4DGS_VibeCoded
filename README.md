@@ -14,7 +14,8 @@
 
 ## Major Dependencies
 
-- **PyTorch 2.2.2** with CUDA 12.1 support
+- **PyTorch 2.8.0+** with CUDA 12.8+ (pre-installed in RunPod)
+- **NumPy 1.24.3** - Fixed version for compatibility
 - **gsplat 0.1.11** - CUDA-accelerated rasterizer from nerfstudio (optional but recommended)
 - **OpenCV** - Video processing and frame extraction
 - **imageio-ffmpeg** - Video I/O support
@@ -62,121 +63,40 @@
 
 ## Installation
 
-### Prerequisites
-- Python 3.8-3.10
-- CUDA 11.8 or 12.1
-- NVIDIA GPU with compute capability 6.0+
+### Environment Requirements
+- **RunPod/Cloud GPU**: PyTorch 2.8.0+ with CUDA 12.8+
+- **Python**: 3.10-3.11
+- **GPU**: NVIDIA with CUDA compute capability 6.0+
 
-### Steps
+### Tested Environment
+This project is optimized for:
+`runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`
 
-#### Option A: Using Conda (Recommended)
+### Installation Steps
+
+#### Quick Install (Recommended)
 ```bash
 # 1. Clone repository
 git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
 cd 4DGS_VibeCoded
 
-# 2. Create conda environment from file (includes all dependencies)
-conda env create -f environment.yml
-conda activate gs4d
-
-# 3. Verify installation
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+# 2. Run installation script
+bash install.sh
 ```
 
-**For RunPod users (RECOMMENDED APPROACH):**
-
-RunPod environments work best with the base environment rather than conda. Use this method:
-
-**Option 1: Automated script (easiest)**
+#### Manual Install
 ```bash
-# Clone and run installation script
+# 1. Clone repository
 git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
 cd 4DGS_VibeCoded
-bash install_runpod.sh
-```
 
-**Option 2: Manual installation**
-```bash
-# Skip conda entirely - use RunPod's base environment
-# Make sure you're NOT in a conda environment
-conda deactivate  # if you're in a conda env
-
-cd 4DGS_VibeCoded
+# 2. Install dependencies
 pip install -r requirements_runpod.txt --force-reinstall
-pip install gsplat==0.1.11
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
-```
 
-**Why this works:** RunPod comes with PyTorch 2.8.0 pre-installed in the base environment, which is newer and better than our conda version. Using the base environment avoids NumPy conflicts.
-
-**⚠️ IMPORTANT for RunPod users:** Always run the training/rendering commands in the **base environment** (no `conda activate` needed). If you activate conda, the NumPy conflicts will return.
-
-**Alternative (if you must use conda):**
-
-```bash
-# Only try this if base environment doesn't work
-conda activate gs4d
-pip uninstall numpy -y
-conda install numpy=1.24.3 -c conda-forge --force-reinstall
-pip install numpy==1.24.3 --force-reinstall
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
-```
-
-**Method 3: Nuclear option for persistent issues:**
-```bash
-# Completely rebuild the environment
-conda remove --name gs4d --all -y
-conda create -n gs4d python=3.10 -y
-conda activate gs4d
-# Install only essential packages
-pip install numpy==1.24.3
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-pip install -r requirements_runpod.txt
-pip install gsplat==0.1.11
-```
-
-**Alternative manual conda setup:**
-```bash
-# Clone first
-git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
-cd 4DGS_VibeCoded
-
-# Create environment manually
-conda create -n gs4d python=3.10 -y
-conda activate gs4d
-
-# Install NumPy first (specific version for compatibility)
-conda install numpy=1.24.3 -c conda-forge
-
-# Install PyTorch with CUDA
-conda install pytorch==2.2.2 torchvision==0.17.2 pytorch-cuda=12.1 -c pytorch -c nvidia
-
-# Install other dependencies
-pip install -r requirements.txt
-pip install gsplat==0.1.11
-```
-
-#### Option B: Using venv
-```bash
-# 1. Clone repository
-git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
-cd 4DGS_VibeCoded
-
-# 2. Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-venv\Scripts\activate     # Windows
-
-# 3. Install PyTorch with CUDA
-pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
-
-# 4. Install dependencies
-pip install -r requirements.txt
-
-# 5. Install CUDA acceleration (optional but recommended)
+# 3. Install CUDA acceleration (optional but recommended)
 pip install gsplat==0.1.11
 
-# 6. Verify installation
+# 4. Verify installation
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
@@ -326,31 +246,10 @@ The system produces high-quality dynamic 3D reconstructions that can be:
 
 ### NumPy Compatibility Error
 If you see "A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x":
-
-**For RunPod environments:**
 ```bash
-# Try these solutions in order:
-
-# Solution 1: Force downgrade
-conda activate gs4d
+# Force reinstall NumPy with the correct version
 pip uninstall numpy -y
 pip install numpy==1.24.3 --force-reinstall
-
-# Solution 2: Skip conda, use base environment
-cd 4DGS_VibeCoded
-pip install -r requirements_runpod.txt --force-reinstall
-
-# Solution 3: Clean install
-conda remove --name gs4d --all -y
-conda create -n gs4d python=3.10 numpy=1.24.3 -y
-conda activate gs4d
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-```
-
-**For other environments:**
-```bash
-conda activate gs4d
-conda install numpy=1.24.3 -c conda-forge --force-reinstall
 ```
 
 ### CUDA Out of Memory

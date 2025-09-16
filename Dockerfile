@@ -1,9 +1,9 @@
-# GPU-enabled base image with CUDA toolchain for building extensions
-FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+# RunPod-compatible base image with PyTorch 2.8.0 and CUDA 12.8
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Pre-set CUDA arch list to build CUDA extensions
-ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
+ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
 ENV FORCE_CUDA=1
 
 # System deps
@@ -15,30 +15,21 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /workspace
 
 # Install Python build tools
-RUN pip3 install --upgrade pip setuptools wheel cmake ninja
+RUN pip install --upgrade pip setuptools wheel cmake ninja
 
-# Install PyTorch with CUDA support
-RUN pip3 install --index-url https://download.pytorch.org/whl/cu121 \
-    torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2
+# PyTorch is pre-installed in the base image, no need to install
+RUN python -c "import torch; print(f'PyTorch {torch.__version__} is ready')"
+
+# Install NumPy first for compatibility
+RUN pip install numpy==1.24.3 --force-reinstall
 
 # Copy and install requirements
-COPY requirements.txt ./requirements.txt
-RUN pip3 install --no-cache-dir -r requirements.txt || \
-    pip3 install --no-cache-dir \
-    'numpy<2.0' \
-    'imageio>=2.9.0' \
-    'imageio-ffmpeg>=0.4.5' \
-    'opencv-python>=4.5.0' \
-    'Pillow>=9.0.0' \
-    'scipy>=1.7.0' \
-    'scikit-learn>=0.24.0' \
-    'tqdm>=4.62.0' \
-    'PyYAML>=5.4.0' \
-    'matplotlib>=3.3.0'
+COPY requirements_runpod.txt ./requirements_runpod.txt
+RUN pip install --no-cache-dir -r requirements_runpod.txt
 
 # Install gsplat for CUDA acceleration
 # This is the high-performance rasterizer from nerfstudio
-RUN pip3 install --no-cache-dir gsplat==0.1.11
+RUN pip install --no-cache-dir gsplat==0.1.11
 
 # Copy project
 COPY . /workspace
