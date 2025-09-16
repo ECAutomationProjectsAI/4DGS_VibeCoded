@@ -20,24 +20,44 @@
 - **imageio-ffmpeg** - Video I/O support
 
 
-## Hardware Requirements
+## Hardware Requirements for Training
 
-### Minimum
-- **CPU**: 4+ cores
-- **RAM**: 16 GB
+### Minimum Requirements for Training
+- **CPU**: 4+ cores (for data preprocessing)
+- **RAM**: 16 GB (32 GB for larger datasets)
 - **GPU**: NVIDIA GTX 1060 6GB (CUDA 11.0+)
-- **Storage**: 50 GB
+  - Must have CUDA-capable GPU for training
+  - VRAM usage scales with resolution and number of Gaussians
+- **Storage**: 50 GB (datasets can be large)
 
-### Recommended
-- **CPU**: 8+ cores
-- **RAM**: 32 GB
+### Recommended for Efficient Training
+- **CPU**: 8+ cores (faster preprocessing)
+- **RAM**: 32 GB (handle multiple camera views)
 - **GPU**: NVIDIA RTX 3070 8GB or better
-- **Storage**: 100 GB SSD
+  - RTX 30/40 series have tensor cores for faster training
+  - More VRAM allows larger point clouds and higher resolution
+- **Storage**: 100 GB SSD (faster data loading)
 
-### Performance Guide
-- **GTX 1060 (6GB)**: 720p videos, 10-sec sequences, ~5 min per 1000 iterations
-- **RTX 3070 (8GB)**: 1080p videos, 20-sec sequences, ~2 min per 1000 iterations
-- **RTX 4090 (24GB)**: 4K videos, 60-sec sequences, ~30 sec per 1000 iterations
+### Training Performance by GPU
+- **GTX 1060 (6GB VRAM)**: 
+  - Max resolution: 720p
+  - Max sequence: 10 seconds
+  - Max Gaussians: ~20,000
+  - Training speed: ~5 min per 1000 iterations
+  
+- **RTX 3070 (8GB VRAM)**: 
+  - Max resolution: 1080p
+  - Max sequence: 20 seconds
+  - Max Gaussians: ~50,000
+  - Training speed: ~2 min per 1000 iterations
+  
+- **RTX 4090 (24GB VRAM)**:
+  - Max resolution: 4K
+  - Max sequence: 60+ seconds
+  - Max Gaussians: ~100,000+
+  - Training speed: ~30 sec per 1000 iterations
+
+**Note**: Rendering trained models requires much less resources - any modern GPU with 4GB+ VRAM can render the outputs.
 
 
 ## Installation
