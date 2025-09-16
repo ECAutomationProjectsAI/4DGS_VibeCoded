@@ -58,6 +58,15 @@
   - Max Gaussians: ~100,000+
   - Training speed: ~30 sec per 1000 iterations
 
+### Expected Quality by Camera Setup
+
+| Camera Setup | Quality | PSNR Range | Use Cases |
+|-------------|---------|------------|------------|
+| **1 camera (rotating)** | Poor-Fair | 20-25 dB | Simple objects, proof of concept |
+| **2-3 cameras** | Fair-Good | 24-28 dB | Basic reconstruction, previews |
+| **4-6 cameras** | Good | 28-32 dB | Production use, most applications |
+| **8+ cameras** | Excellent | 32-36 dB | High-quality production, research |
+
 **Note**: Rendering trained models requires much less resources - any modern GPU with 4GB+ VRAM can render the outputs.
 
 
@@ -113,6 +122,65 @@ docker run --gpus all -it gs4d:latest
 
 ## Input Data Requirements
 
+### Camera Setup Requirements
+
+#### Single Camera (Limited Results)
+- **Can work?** Yes, but with significant limitations
+- **Quality**: Poor to moderate 3D reconstruction
+- **Best for**: Objects with simple geometry, rotating objects, or camera orbiting around static object
+- **Requirements**: 
+  - Camera or object must move to capture multiple viewpoints
+  - Slow, smooth motion (avoid shaky footage)
+  - Complete 360° coverage if possible
+
+#### Multi-Camera (Recommended)
+- **Minimum recommended**: 3-4 cameras from different angles
+- **Optimal**: 6-8 cameras for full coverage
+- **Best results**: 8-12 synchronized cameras
+- **Setup tips**:
+  - Place cameras at different heights and angles
+  - Ensure overlapping fields of view (30-50% overlap)
+  - Synchronize cameras or use sync offsets
+
+### Background Requirements
+
+#### Current Capabilities
+- **Background handling**: No automatic background removal
+- **Works best with**:
+  - Clean, uncluttered backgrounds
+  - Static backgrounds (no moving objects)
+  - Uniform or simple backgrounds (green screen, white wall)
+  - Consistent lighting
+
+#### Background Recommendations
+- **Option 1**: Use green/blue screen for easier post-processing
+- **Option 2**: Use depth sensors to create masks
+- **Option 3**: Pre-process videos to remove background:
+  ```bash
+  # You can pre-process videos with external tools like:
+  # - RunwayML for AI background removal
+  # - OpenCV background subtraction
+  # - Commercial tools like Unscreen
+  ```
+
+### Video Content Requirements
+
+#### What Works Well
+- **Subject**: Single moving object or person
+- **Motion**: Smooth, continuous movement
+- **Duration**: 5-30 seconds optimal
+- **Frame rate**: 24-60 fps
+- **Resolution**: 720p-1080p (higher = better quality but slower)
+- **Lighting**: Consistent, well-lit, minimal shadows
+
+#### What to Avoid
+- Fast, jerky movements
+- Motion blur
+- Transparent or reflective objects
+- Extreme lighting changes
+- Multiple moving objects (unless all are part of the subject)
+- Occlusions (objects passing in front)
+
 ### Supported Formats
 - **Video files**: MP4, AVI, MOV, MKV (any OpenCV-supported format)
 - **Image sequences**: JPG, PNG frames with transforms.json
@@ -123,7 +191,8 @@ docker run --gpus all -it gs4d:latest
 dataset/
 ├── frames/           # Extracted frames
 │   ├── cam0/        # Camera 0 (required)
-│   ├── cam1/        # Camera 1 (optional)
+│   ├── cam1/        # Camera 1 (optional but recommended)
+│   ├── cam2/        # Camera 2 (more cameras = better quality)
 │   └── ...
 ├── transforms.json   # Camera parameters & timestamps
 └── metadata.json     # Processing information
@@ -134,19 +203,37 @@ dataset/
 
 ### Step 1: Prepare Video Data
 
+#### Example A: Single Camera (Turntable/Orbiting Setup)
 ```bash
-# Single video
-python tools/preprocess_video.py input_video.mp4 -o dataset/
+# For single camera - object should rotate or camera should orbit
+python tools/preprocess_video.py turntable_video.mp4 -o dataset/ \
+    --resize 1280 720              # Consistent resolution
+    --extract-every 2              # Reduce frames for faster processing
+```
 
-# Multiple synchronized cameras
-python tools/preprocess_video.py cam0.mp4 cam1.mp4 cam2.mp4 -o dataset/ \
-    --camera-names front left right
+#### Example B: Multi-Camera Setup (Recommended)
+```bash
+# 4-camera setup for good results
+python tools/preprocess_video.py \
+    front.mp4 left.mp4 right.mp4 back.mp4 \
+    -o dataset/ \
+    --camera-names front left right back \
+    --sync-offsets 0.0 0.0 0.0 0.0  # Adjust if cameras aren't synchronized
 
-# With preprocessing options
-python tools/preprocess_video.py video.mp4 -o dataset/ \
-    --start 10 --end 30           # Extract 10-30 seconds
-    --resize 1280 720              # Resize to 720p
-    --extract-every 2              # Extract every 2nd frame
+# 8-camera setup for best results
+python tools/preprocess_video.py \
+    cam0.mp4 cam1.mp4 cam2.mp4 cam3.mp4 \
+    cam4.mp4 cam5.mp4 cam6.mp4 cam7.mp4 \
+    -o dataset/ \
+    --resize 1920 1080
+```
+
+#### Example C: With Background Preprocessing
+```bash
+# If you have green screen footage, consider masking first
+# (requires external tools or manual preprocessing)
+python tools/preprocess_video.py masked_video.mp4 -o dataset/ \
+    --start 10 --end 30           # Extract specific time range
 ```
 
 ### Step 2: Train 4DGS Model
@@ -228,6 +315,34 @@ python tools/prepare_synthetic.py --out_root test_data/ --frames 10 --H 256 --W 
 ```
 
 
+## Tips for Better Results
+
+### Single Camera Setup Tips
+If you only have one camera:
+1. **Use a turntable**: Place object on rotating platform
+2. **Orbit the camera**: Move camera around stationary object in smooth circle
+3. **Ensure complete coverage**: Capture full 360° if possible
+4. **Keep motion slow and steady**: Avoid sudden movements
+5. **Maintain consistent distance**: Don't zoom in/out during capture
+6. **Use markers**: Place reference markers for better tracking
+7. **Increase training iterations**: Use `--iters 50000` for better convergence
+
+### Background Handling Tips
+1. **Green screen**: Easiest to remove in post-processing
+2. **Plain backdrop**: White/black sheets work well
+3. **Depth camera**: Use RGB-D cameras to generate masks
+4. **Pre-process with AI tools**:
+   - Remove.bg for images
+   - RunwayML for videos
+   - Unscreen for professional results
+
+### General Quality Tips
+1. **More cameras = better quality**: Each additional viewpoint helps significantly
+2. **Synchronization matters**: Use hardware sync or clapperboard for alignment
+3. **Consistent lighting**: Avoid shadows and reflections
+4. **Higher resolution**: Train at highest resolution your GPU can handle
+5. **Temporal consistency**: Use `--w_temporal 0.02-0.05` for smoother motion
+
 ## Output
 
 After completing the workflow, you will have:
@@ -236,11 +351,11 @@ After completing the workflow, you will have:
 2. **Rendered Frames** (`renders/`): Reconstructed video frames from novel viewpoints
 3. **Metrics** (optional): PSNR, SSIM values for quality assessment
 
-The system produces high-quality dynamic 3D reconstructions that can be:
-- Rendered from arbitrary viewpoints
-- Played back at different speeds
-- Exported to other 4DGS formats
-- Used for downstream applications (VR, AR, video editing)
+The system produces dynamic 3D reconstructions with quality dependent on:
+- Number of camera viewpoints (more = better)
+- Background complexity (simpler = better)
+- Subject motion (smoother = better)
+- Training iterations (more = better convergence)
 
 ## Troubleshooting
 
