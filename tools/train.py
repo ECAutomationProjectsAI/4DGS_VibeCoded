@@ -36,10 +36,14 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-2)
     parser.add_argument('--sh_degree', type=int, default=3)
     parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID to use (for multi-GPU systems)')
     parser.add_argument('--save_every', type=int, default=500)
     parser.add_argument('--validate_every', type=int, default=100)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--max_points', type=int, default=50000)
+    parser.add_argument('--max_points', type=int, default=20000, help='Maximum number of Gaussians (reduced default)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--max_frames', type=int, default=-1, help='Maximum frames to load (-1 for all)')
+    parser.add_argument('--max_memory_gb', type=float, default=8.0, help='Maximum memory for images (GB)')
     parser.add_argument('--renderer', type=str, default='naive', choices=['naive','fast'], help='Renderer backend')
     # Loss weights
     parser.add_argument('--w_ssim', type=float, default=0.2)
@@ -59,18 +63,73 @@ def main():
     parser.add_argument('--sh_increase_interval', type=int, default=1000)
 
     args = parser.parse_args()
+    
+    print("="*60)
+    print("4D Gaussian Splatting Training")
+    print("="*60)
+    print(f"Data root: {args.data_root}")
+    print(f"Output directory: {args.out_dir}")
+    print(f"Iterations: {args.iters}")
+    print(f"Max points: {args.max_points}")
+    print(f"Renderer: {args.renderer}")
+    print("="*60)
 
+    # Set GPU
+    if torch.cuda.is_available():
+        torch.cuda.set_device(args.gpu_id)
+        print(f"Using GPU {args.gpu_id}: {torch.cuda.get_device_name(args.gpu_id)}")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(args.gpu_id).total_memory / 1e9:.2f} GB")
+    else:
+        print("WARNING: CUDA not available, using CPU (will be very slow)")
+    
     seed_everything(args.seed)
-    device = torch.device(args.device if torch.cuda.is_available() and args.device=='cuda' else 'cpu')
+    device = torch.device(f'cuda:{args.gpu_id}' if torch.cuda.is_available() else 'cpu')
 
     ensure_dir(args.out_dir)
+    
+    print("\nLoading dataset...")
+    # Check if data exists
+    if not os.path.exists(args.data_root):
+        print(f"ERROR: Data root does not exist: {args.data_root}")
+        sys.exit(1)
+        
+    transforms_path = os.path.join(args.data_root, 'transforms.json')
+    if not os.path.exists(transforms_path):
+        print(f"ERROR: transforms.json not found in {args.data_root}")
+        print("Please run preprocessing first: python tools/preprocess_video.py")
+        sys.exit(1)
 
-    # Load sequence (images [F,3,H,W], cams list, times [F,1], masks [F,1,H,W] or None)
-    images, cams, times, masks = load_sequence(args.data_root, mask_root=args.mask_root)
-    F, C, H, W = images.shape
+    # Load sequence with memory limits
+    try:
+        images, cams, times, masks = load_sequence(
+            args.data_root, 
+            mask_root=args.mask_root,
+            max_frames=args.max_frames,
+            max_memory_gb=args.max_memory_gb
+        )
+        F, C, H, W = images.shape
+        print(f"\nSuccessfully loaded {F} frames, resolution: {W}x{H}")
+        print(f"Images tensor size: {images.shape}, dtype: {images.dtype}")
+        print(f"Memory usage: {images.element_size() * images.numel() / 1e9:.2f} GB")
+        
+        # Move to GPU in chunks if needed
+        if device.type == 'cuda':
+            # Don't move all images to GPU at once
+            print(f"\nGPU Memory before: {torch.cuda.memory_allocated(device) / 1e9:.2f} GB")
+            images = images.to(device)
+            print(f"GPU Memory after moving images: {torch.cuda.memory_allocated(device) / 1e9:.2f} GB")
+            
+    except Exception as e:
+        print(f"\nERROR loading dataset: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
-    # Initialize a tiny point cloud by sampling pixels from first frame with stratified sampling
-    n_init = min(args.max_points, max(1024, (H * W) // 20))
+    # Initialize a tiny point cloud by sampling pixels from first frame
+    print("\nInitializing Gaussians...")
+    n_init = min(args.max_points // 10, max(1024, (H * W) // 100))  # Start with fewer points
+    print(f"  Initial points: {n_init} (will grow to max {args.max_points})")
+    
     ys = torch.randint(0, H, (n_init,))
     xs = torch.randint(0, W, (n_init,))
     # Back-project onto a fronto-parallel plane at z=2.0 in cam 0, approximate world frame as cam0 frame
@@ -114,7 +173,16 @@ def main():
         appearance_weight=0.2
     ) if args.w_temporal > 0 else None
     
-    pbar = tqdm(range(1, args.iters + 1), desc='train')
+    print("\n" + "="*60)
+    print("Starting Training")
+    print("="*60)
+    print(f"Training for {args.iters} iterations")
+    print(f"Saving checkpoints every {args.save_every} iterations")
+    if device.type == 'cuda':
+        print(f"Current GPU memory: {torch.cuda.memory_allocated(device) / 1e9:.2f} GB")
+    print("\nProgress:")
+    
+    pbar = tqdm(range(1, args.iters + 1), desc='Training')
     for it in pbar:
         optim.zero_grad()
         # Pick a random frame

@@ -35,7 +35,7 @@ def _maybe_load_mask(mask_path: str, H: int, W: int) -> Optional[torch.Tensor]:
     return mk
 
 
-def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = None) -> Tuple[torch.Tensor, list, torch.Tensor, Optional[torch.Tensor]]:
+def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = None, max_frames: int = -1, max_memory_gb: float = 8.0) -> Tuple[torch.Tensor, list, torch.Tensor, Optional[torch.Tensor]]:
     """
     Expect structure:
     root/
@@ -44,6 +44,14 @@ def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = 
       transforms.json with fields:
         frames: [ {file_path, transform_matrix (c2w)}, ... ]
         fl_x, fl_y, cx, cy, h, w
+    
+    Args:
+        root: Dataset root directory
+        time_norm: Whether to normalize timestamps
+        mask_root: Optional mask directory
+        max_frames: Maximum number of frames to load (-1 for all)
+        max_memory_gb: Maximum memory to use for images (in GB)
+        
     Returns: images [F,3,H,W], cams list, times [F,1], masks [F,1,H,W] or None
     """
     meta = load_transforms(os.path.join(root, 'transforms.json'))
@@ -53,6 +61,27 @@ def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = 
 
     K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
     frames = meta['frames']
+    
+    # Calculate memory usage per frame
+    bytes_per_pixel = 4  # float32
+    channels = 3
+    memory_per_frame_gb = (H * W * channels * bytes_per_pixel) / (1024**3)
+    total_frames = len(frames)
+    
+    # Check memory and limit frames if needed
+    if max_frames > 0:
+        frames = frames[:max_frames]
+        print(f"  Limiting to {max_frames} frames (from {total_frames} total)")
+    
+    expected_memory_gb = len(frames) * memory_per_frame_gb
+    if expected_memory_gb > max_memory_gb:
+        max_allowed_frames = int(max_memory_gb / memory_per_frame_gb)
+        print(f"  WARNING: Loading {len(frames)} frames would use {expected_memory_gb:.2f} GB")
+        print(f"  Limiting to {max_allowed_frames} frames to stay under {max_memory_gb:.2f} GB")
+        frames = frames[:max_allowed_frames]
+    
+    print(f"  Loading {len(frames)} frames ({len(frames) * memory_per_frame_gb:.2f} GB)...")
+    
     images = []
     cams = []
     times = []
