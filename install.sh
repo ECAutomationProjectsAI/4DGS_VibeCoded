@@ -58,8 +58,25 @@ $PIP_CMD install --upgrade pip setuptools wheel
 # CRITICAL: Install NumPy first with specific version
 echo ""
 echo "Step 5: Installing NumPy 1.24.3 (CRITICAL for compatibility)..."
+echo "  Note: PyTorch 2.8+ comes with NumPy 2.x which is incompatible."
+echo "  We need to downgrade to NumPy 1.24.3 for compatibility."
+
+# First check current numpy version
+$PYTHON_CMD -c "import numpy; print(f'  Current NumPy: {numpy.__version__}')" 2>/dev/null || echo "  NumPy not installed"
+
+# Force uninstall any existing numpy
 $PIP_CMD uninstall numpy -y 2>/dev/null || true
-$PIP_CMD install numpy==1.24.3 --force-reinstall --no-cache-dir
+
+# Install specific numpy version with maximum force
+echo "  Installing NumPy 1.24.3..."
+$PIP_CMD install numpy==1.24.3 --force-reinstall --no-deps --no-cache-dir
+
+# Verify it worked
+$PYTHON_CMD -c "import numpy; assert numpy.__version__.startswith('1.24'), f'NumPy {numpy.__version__} installed, need 1.24.x'; print(f'  ✓ NumPy {numpy.__version__} installed successfully')" || {
+    echo "  ✗ Failed to install NumPy 1.24.3!"
+    echo "  Trying alternative approach..."
+    $PIP_CMD install 'numpy<2.0' --force-reinstall --no-cache-dir
+}
 
 # Install all core dependencies
 echo ""

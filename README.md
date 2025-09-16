@@ -92,7 +92,10 @@ cd 4DGS_VibeCoded
 # 2. Run installation script (REQUIRED - installs all dependencies)
 bash install.sh
 
-# 3. Verify installation worked
+# 3. If you get NumPy errors (common with PyTorch 2.8+), run:
+python fix_numpy.py  # or bash fix_numpy.sh
+
+# 4. Verify installation worked
 python -c "import cv2, imageio, numpy; print('Dependencies OK')"
 ```
 
@@ -372,6 +375,38 @@ If you only have one camera:
 3. **Consistent lighting**: Avoid shadows and reflections
 4. **Higher resolution**: Train at highest resolution your GPU can handle
 5. **Temporal consistency**: Use `--w_temporal 0.02-0.05` for smoother motion
+
+## Troubleshooting
+
+### NumPy Version Error
+If you see "NumPy: FAILED or wrong version" during installation:
+
+**Problem**: PyTorch 2.8+ includes NumPy 2.x, but this project requires NumPy 1.24.x.
+
+**Solution**:
+```bash
+# Quick fix (cross-platform):
+python fix_numpy.py
+
+# Or manually:
+pip uninstall numpy -y
+pip install numpy==1.24.3 --no-deps
+```
+
+### CUDA Out of Memory
+If training fails with CUDA OOM errors:
+
+```bash
+# Reduce max points
+python tools/train.py --data_root dataset/ --out_dir model/ --max_points 100000
+
+# Or reduce memory usage
+python tools/train.py --data_root dataset/ --out_dir model/ --vram_fraction 0.8
+```
+
+### Insufficient System Memory
+The script will now stop with clear instructions if you don't have enough RAM/VRAM.
+Follow the suggested solutions in the error message.
 
 ## Output
 
