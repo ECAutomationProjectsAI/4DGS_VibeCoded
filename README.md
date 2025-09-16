@@ -365,15 +365,12 @@ The system produces dynamic 3D reconstructions with quality dependent on:
 ### ModuleNotFoundError (cv2, imageio, etc.)
 If you get module not found errors, the dependencies aren't installed:
 ```bash
-# Option 1: Quick install (fastest)
-bash quick_install.sh
-
-# Option 2: Full installation
+# Option 1: Run the installation script
 bash install.sh
 
-# Option 3: Manual install
+# Option 2: Manual install all dependencies
 pip3 install numpy==1.24.3 opencv-python imageio imageio-ffmpeg Pillow scipy scikit-learn tqdm PyYAML pandas h5py matplotlib
-pip3 install gsplat==0.1.11  # optional
+pip3 install gsplat==0.1.11  # optional for CUDA acceleration
 ```
 
 ### NumPy Compatibility Error
