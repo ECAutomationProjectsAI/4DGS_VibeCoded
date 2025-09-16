@@ -60,13 +60,13 @@ def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = 
             import psutil
             mem = psutil.virtual_memory()
             available_gb = mem.available / (1024**3)
-            # Use 85% of available memory by default
-            max_memory_gb = available_gb * 0.85
-            print(f"  Auto-detected memory limit: {max_memory_gb:.1f} GB (85% of {available_gb:.1f} GB available)")
+            # Use 90% of available memory by default (aggressive)
+            max_memory_gb = available_gb * 0.90
+            print(f"  🔧 Auto-detected memory limit: {max_memory_gb:.1f} GB (90% of {available_gb:.1f} GB available)")
         except ImportError:
             # Fallback if psutil not available
             max_memory_gb = 8.0
-            print(f"  Using default memory limit: {max_memory_gb:.1f} GB")
+            print(f"  ⚠️  Using default memory limit: {max_memory_gb:.1f} GB (install psutil for auto-detection)")
     
     meta = load_transforms(os.path.join(root, 'transforms.json'))
     H, W = int(meta['h']), int(meta['w'])
@@ -99,18 +99,51 @@ def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = 
         print(f"  Limiting to {max_allowed_frames} frames to stay under {max_memory_gb:.2f} GB")
         frames = frames[:max_allowed_frames]
     
-    print(f"  Loading {len(frames)} frames ({len(frames) * memory_per_frame_gb:.2f} GB estimated)...")
+    print(f"  📁 Loading {len(frames)} frames ({len(frames) * memory_per_frame_gb:.2f} GB estimated)...")
+    
+    # Check if we have enough memory before starting
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        current_available_gb = mem.available / (1024**3)
+        if len(frames) * memory_per_frame_gb > current_available_gb:
+            print(f"\n❌ ERROR: Not enough memory to load frames!")
+            print(f"   Need: {len(frames) * memory_per_frame_gb:.2f} GB")
+            print(f"   Available: {current_available_gb:.2f} GB")
+            print(f"\n💡 Solutions:")
+            print(f"   1. Reduce frames with --max_frames {int(current_available_gb / memory_per_frame_gb * 0.8)}")
+            print(f"   2. Reduce resolution in preprocessing")
+            print(f"   3. Close other applications")
+            raise MemoryError(f"Insufficient memory: need {len(frames) * memory_per_frame_gb:.2f}GB, have {current_available_gb:.2f}GB")
+    except ImportError:
+        pass  # psutil not available, skip check
+    
+    from tqdm import tqdm
     
     images = []
     cams = []
     times = []
     masks = [] if mask_root is not None else None
-    for i, fr in enumerate(frames):
+    
+    # Progress bar for loading frames
+    pbar = tqdm(enumerate(frames), total=len(frames), desc="Loading frames", unit="frame")
+    for i, fr in pbar:
         fp = os.path.join(root, fr['file_path'])
+        
+        # Check if file exists
+        if not os.path.exists(fp):
+            print(f"\n❌ ERROR: Frame file not found: {fp}")
+            raise FileNotFoundError(f"Frame file not found: {fp}")
+        
         im = imageio.imread(fp).astype(np.float32) / 255.0
         if im.shape[:2] != (H, W):
             raise ValueError(f"Image {fp} has shape {im.shape}, expected {(H,W)}")
         images.append(torch.from_numpy(im).permute(2, 0, 1))
+        
+        # Update progress bar with memory usage
+        if i % 10 == 0:  # Update every 10 frames
+            loaded_gb = (i + 1) * memory_per_frame_gb
+            pbar.set_postfix({'Loaded': f'{loaded_gb:.1f}GB', 'Progress': f'{(i+1)/len(frames)*100:.0f}%'})
         c2w = np.array(fr['transform_matrix'], dtype=np.float32)
         R, t = pose_from_colmap(c2w)
         cams.append({

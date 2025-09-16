@@ -249,11 +249,13 @@ The training script now **automatically optimizes** for your hardware:
 python tools/train.py --data_root dataset/ --out_dir model/
 
 # The script will:
-# ✓ Auto-detect available CPU RAM and use 85% efficiently
-# ✓ Auto-select GPU with most free VRAM
-# ✓ Auto-calculate optimal max points based on GPU memory  
-# ✓ Auto-adjust frame loading based on available memory
+# ✓ Auto-detect available CPU RAM and use 90% efficiently
+# ✓ Auto-select GPU with most free VRAM (uses 95%)
+# ✓ Auto-calculate optimal max points (150k per GB VRAM)
+# ✓ Auto-adjust frame loading with memory validation
 # ✓ Auto-scale training iterations for scene complexity
+# ✓ Show comprehensive progress with memory monitoring
+# ✓ Stop with clear error if insufficient resources
 ```
 
 #### Basic Training Examples
@@ -282,16 +284,18 @@ python tools/train.py \
 #### Key Training Parameters
 
 **Auto-Detected (no need to set):**
-- `--max_points`: Automatically set based on GPU VRAM (~100k per GB)
-- `--max_memory_gb`: Uses 85% of available RAM by default
+- `--max_points`: Automatically set based on GPU VRAM (150k per GB at 95% usage)
+- `--max_memory_gb`: Uses 90% of available RAM (aggressive but safe)
 - `--gpu_id`: Selects GPU with most free memory (-1 for auto)
 - `--iters`: 30k for simple scenes, 50k for complex (auto-adjusted)
+- Memory validation before starting (stops if insufficient)
 
 **Manual Tuning (optional):**
 - `--renderer`: 'fast' for CUDA, 'naive' for compatibility
 - `--w_temporal`: Temporal consistency (0.01-0.05)
 - `--sh_degree`: Color complexity (0-3, higher = better)
-- `--memory_fraction`: Safety margin (0.85 = use 85% of resources)
+- `--memory_fraction`: CPU usage (default 0.90 = 90% of RAM)
+- `--vram_fraction`: GPU usage (default 0.95 = 95% of VRAM)
 
 
 ### Step 3: Render Output

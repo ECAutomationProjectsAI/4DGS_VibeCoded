@@ -63,8 +63,9 @@ def main():
     parser.add_argument('--max_points', type=int, default=-1, help='Maximum Gaussians (-1 for auto based on GPU memory)')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
     parser.add_argument('--max_frames', type=int, default=-1, help='Maximum frames to load (-1 for auto)')
-    parser.add_argument('--max_memory_gb', type=float, default=-1, help='Maximum RAM for images (-1 for auto 85% of available)')
-    parser.add_argument('--memory_fraction', type=float, default=0.85, help='Fraction of available memory to use (0.85 = 85%)')
+    parser.add_argument('--max_memory_gb', type=float, default=-1, help='Maximum RAM for images (-1 for auto 90% of available)')
+    parser.add_argument('--memory_fraction', type=float, default=0.90, help='Fraction of available memory to use (0.90 = 90%)')
+    parser.add_argument('--vram_fraction', type=float, default=0.95, help='Fraction of GPU memory to use (0.95 = 95%)')
     parser.add_argument('--renderer', type=str, default='fast', choices=['naive','fast'], help='Renderer backend (fast recommended)')
     # Loss weights
     parser.add_argument('--w_ssim', type=float, default=0.2)
@@ -127,29 +128,57 @@ def main():
         print("\n⚠️  No GPU available, using CPU (will be slow)")
     
     # Display system resources
-    print(f"\n📊 System Resources:")
-    print(f"   CPU RAM: {available_ram_gb:.1f}/{total_ram_gb:.1f} GB available")
+    print(f"\n📊 System Resources Detected:")
+    print(f"   CPU RAM: {available_ram_gb:.1f}/{total_ram_gb:.1f} GB available ({available_ram_gb/total_ram_gb*100:.1f}% free)")
     if torch.cuda.is_available():
-        print(f"   GPU VRAM: {available_vram_gb:.1f}/{total_vram_gb:.1f} GB available")
+        print(f"   GPU VRAM: {available_vram_gb:.1f}/{total_vram_gb:.1f} GB available ({available_vram_gb/total_vram_gb*100:.1f}% free)")
+    
+    # Resource validation - check minimums
+    MIN_RAM_GB = 4.0  # Minimum 4GB RAM needed
+    MIN_VRAM_GB = 2.0  # Minimum 2GB VRAM for GPU training
+    
+    if available_ram_gb < MIN_RAM_GB:
+        print(f"\n❌ ERROR: Insufficient RAM!")
+        print(f"   Available: {available_ram_gb:.1f} GB")
+        print(f"   Required: {MIN_RAM_GB:.1f} GB minimum")
+        print(f"\n💡 Solutions:")
+        print(f"   1. Close other applications to free memory")
+        print(f"   2. Reduce dataset size with --max_frames")
+        print(f"   3. Use lower resolution images")
+        sys.exit(1)
+    
+    if torch.cuda.is_available() and available_vram_gb < MIN_VRAM_GB:
+        print(f"\n❌ ERROR: Insufficient GPU VRAM!")
+        print(f"   Available: {available_vram_gb:.1f} GB")
+        print(f"   Required: {MIN_VRAM_GB:.1f} GB minimum")
+        print(f"\n💡 Solutions:")
+        print(f"   1. Close other GPU applications")
+        print(f"   2. Use --max_points to limit Gaussians")
+        print(f"   3. Use CPU training with --device cpu (slow)")
+        sys.exit(1)
     
     # Auto-configure memory limits based on available resources
     if args.max_memory_gb == -1:
-        # Use 85% of available RAM by default (or user-specified fraction)
+        # Use 90% of available RAM by default
         args.max_memory_gb = available_ram_gb * args.memory_fraction
-        print(f"\n🔧 Auto-configured memory limit: {args.max_memory_gb:.1f} GB ({args.memory_fraction*100:.0f}% of available)")
+        print(f"\n🔧 Auto-configured RAM usage: {args.max_memory_gb:.1f} GB ({args.memory_fraction*100:.0f}% of {available_ram_gb:.1f} GB)")
     else:
+        # Validate user-specified memory
+        if args.max_memory_gb > available_ram_gb:
+            print(f"\n⚠️  WARNING: Requested {args.max_memory_gb:.1f} GB exceeds available {available_ram_gb:.1f} GB")
+            print(f"   Capping at {available_ram_gb * 0.95:.1f} GB (95% of available)")
+            args.max_memory_gb = available_ram_gb * 0.95
         print(f"\n📌 Using specified memory limit: {args.max_memory_gb:.1f} GB")
     
     # Auto-configure max points based on GPU memory
     if args.max_points == -1 and torch.cuda.is_available():
-        # Estimate max points based on available VRAM
-        # Rough estimate: 100k points per GB of VRAM (conservative)
-        vram_for_points = available_vram_gb * args.memory_fraction
-        args.max_points = min(int(vram_for_points * 100_000), 1_000_000)  # Cap at 1M points
-        print(f"🔧 Auto-configured max points: {args.max_points:,} (based on {vram_for_points:.1f} GB VRAM)")
+        # More aggressive: 150k points per GB with 95% VRAM usage
+        vram_for_points = available_vram_gb * args.vram_fraction
+        args.max_points = min(int(vram_for_points * 150_000), 2_000_000)  # Cap at 2M points
+        print(f"🔧 Auto-configured max points: {args.max_points:,} (using {vram_for_points:.1f} GB VRAM at {args.vram_fraction*100:.0f}%)")
     elif args.max_points == -1:
         # CPU fallback
-        args.max_points = 50_000
+        args.max_points = 25_000
         print(f"🔧 Using default max points for CPU: {args.max_points:,}")
     else:
         print(f"📌 Using specified max points: {args.max_points:,}")
@@ -261,13 +290,20 @@ def main():
     print("\n" + "="*60)
     print("Starting Training")
     print("="*60)
-    print(f"Training for {args.iters} iterations")
-    print(f"Saving checkpoints every {args.save_every} iterations")
+    print(f"Training for {args.iters:,} iterations")
+    print(f"Saving checkpoints every {args.save_every:,} iterations")
+    print(f"Validation every {args.validate_every:,} iterations")
+    print(f"Densification every {args.densification_interval} iterations (until iter {args.densify_until_iter:,})")
     if device.type == 'cuda':
-        print(f"Current GPU memory: {torch.cuda.memory_allocated(device) / 1e9:.2f} GB")
-    print("\nProgress:")
+        print(f"Initial GPU memory: {torch.cuda.memory_allocated(device) / 1e9:.2f}/{total_vram_gb:.1f} GB")
+    print("\nStarting optimization...\n")
     
-    pbar = tqdm(range(1, args.iters + 1), desc='Training')
+    # Track metrics
+    best_psnr = 0
+    loss_history = []
+    memory_warnings = 0
+    
+    pbar = tqdm(range(1, args.iters + 1), desc='Training', unit='iter')
     for it in pbar:
         optim.zero_grad()
         # Pick a random frame
@@ -401,9 +437,39 @@ def main():
 
         optim.step()
 
+        # Update progress bar with comprehensive metrics
         with torch.no_grad():
-            metric = psnr(img, gt).item()
-        pbar.set_postfix({'l1': L_l1.item(), 'psnr': f'{metric:.2f}'})
+            current_psnr = psnr(img, gt).item()
+            best_psnr = max(best_psnr, current_psnr)
+            loss_history.append(loss.item())
+            
+            # Memory monitoring every 100 iterations
+            if it % 100 == 0 and device.type == 'cuda':
+                current_vram = torch.cuda.memory_allocated(device) / 1e9
+                vram_percent = (current_vram / total_vram_gb) * 100
+                
+                # Check for memory warnings
+                if vram_percent > 95:
+                    memory_warnings += 1
+                    if memory_warnings > 5:
+                        print(f"\n⚠️ WARNING: High VRAM usage ({vram_percent:.1f}%)!")
+                        print(f"   Consider reducing --max_points or --max_memory_gb")
+                        memory_warnings = 0  # Reset counter
+                
+                pbar.set_postfix({
+                    'Loss': f'{loss.item():.4f}',
+                    'PSNR': f'{current_psnr:.2f}',
+                    'Best': f'{best_psnr:.2f}',
+                    'Points': f'{model.xyz.shape[0]:,}',
+                    'VRAM': f'{current_vram:.1f}GB ({vram_percent:.0f}%)'
+                })
+            else:
+                pbar.set_postfix({
+                    'Loss': f'{loss.item():.4f}',
+                    'PSNR': f'{current_psnr:.2f}',
+                    'Best': f'{best_psnr:.2f}',
+                    'Points': f'{model.xyz.shape[0]:,}'
+                })
 
         # SH growth
         if args.sh_degree > 0 and it % args.sh_increase_interval == 0:
@@ -432,6 +498,35 @@ def main():
 
     # Final export
     torch.save({'state': model.state_dict_compact()}, os.path.join(args.out_dir, f'model_final.pt'))
+    
+    # Training summary
+    print("\n" + "="*60)
+    print("✅ Training Completed Successfully!")
+    print("="*60)
+    print(f"\n📊 Final Statistics:")
+    print(f"   Total iterations: {args.iters:,}")
+    print(f"   Final point count: {model.xyz.shape[0]:,}")
+    print(f"   Best PSNR achieved: {best_psnr:.2f} dB")
+    if len(loss_history) > 0:
+        print(f"   Final loss: {loss_history[-1]:.4f}")
+        print(f"   Average loss: {np.mean(loss_history):.4f}")
+    
+    if device.type == 'cuda':
+        final_vram = torch.cuda.memory_allocated(device) / 1e9
+        print(f"\n💾 Memory Usage:")
+        print(f"   Peak VRAM: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
+        print(f"   Final VRAM: {final_vram:.2f} GB")
+    
+    print(f"\n📂 Output Files:")
+    print(f"   Model saved to: {os.path.join(args.out_dir, 'model_final.pt')}")
+    checkpoint_files = [f for f in os.listdir(args.out_dir) if f.startswith('model_') and f.endswith('.pt')]
+    print(f"   Checkpoints saved: {len(checkpoint_files)}")
+    
+    print(f"\n🎯 Next Steps:")
+    print(f"   1. Render results: python tools/render.py --data_root {args.data_root} --ckpt {os.path.join(args.out_dir, 'model_final.pt')} --out_dir renders/")
+    print(f"   2. Evaluate quality: python tools/evaluate.py --data_root {args.data_root} --renders_dir renders/")
+    print(f"   3. Create video: python tools/create_video.py --input_dir renders/ --output video.mp4")
+    print("\n" + "="*60)
 
 
 if __name__ == '__main__':
