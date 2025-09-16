@@ -73,7 +73,7 @@
 ```bash
 # 1. Clone repository
 git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
-cd 4dgs-project
+cd 4DGS_VibeCoded
 
 # 2. Create conda environment from file (includes all dependencies)
 conda env create -f environment.yml
@@ -83,11 +83,26 @@ conda activate gs4d
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
+**For RunPod users experiencing NumPy issues:**
+```bash
+# If you get NumPy compatibility errors, fix with:
+conda activate gs4d
+conda install numpy=1.24.3 -c conda-forge --force-reinstall
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
 **Alternative manual conda setup:**
 ```bash
+# Clone first
+git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
+cd 4DGS_VibeCoded
+
 # Create environment manually
 conda create -n gs4d python=3.10 -y
 conda activate gs4d
+
+# Install NumPy first (specific version for compatibility)
+conda install numpy=1.24.3 -c conda-forge
 
 # Install PyTorch with CUDA
 conda install pytorch==2.2.2 torchvision==0.17.2 pytorch-cuda=12.1 -c pytorch -c nvidia
@@ -101,7 +116,7 @@ pip install gsplat==0.1.11
 ```bash
 # 1. Clone repository
 git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
-cd 4dgs-project
+cd 4DGS_VibeCoded
 
 # 2. Create virtual environment
 python -m venv venv
@@ -264,6 +279,14 @@ The system produces high-quality dynamic 3D reconstructions that can be:
 - Used for downstream applications (VR, AR, video editing)
 
 ## Troubleshooting
+
+### NumPy Compatibility Error
+If you see "A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x":
+```bash
+# Fix NumPy version
+conda activate gs4d
+conda install numpy=1.24.3 -c conda-forge --force-reinstall
+```
 
 ### CUDA Out of Memory
 - Reduce `--max_points` (e.g., 20000)
