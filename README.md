@@ -83,27 +83,42 @@ conda activate gs4d
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
-**For RunPod users experiencing NumPy issues:**
+**For RunPod users (RECOMMENDED APPROACH):**
 
-RunPod environments can have pre-installed PyTorch that conflicts with our NumPy requirements. Try this more aggressive fix:
+RunPod environments work best with the base environment rather than conda. Use this method:
+
+**Option 1: Automated script (easiest)**
+```bash
+# Clone and run installation script
+git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
+cd 4DGS_VibeCoded
+bash install_runpod.sh
+```
+
+**Option 2: Manual installation**
+```bash
+# Skip conda entirely - use RunPod's base environment
+# Make sure you're NOT in a conda environment
+conda deactivate  # if you're in a conda env
+
+cd 4DGS_VibeCoded
+pip install -r requirements_runpod.txt --force-reinstall
+pip install gsplat==0.1.11
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
+**Why this works:** RunPod comes with PyTorch 2.8.0 pre-installed in the base environment, which is newer and better than our conda version. Using the base environment avoids NumPy conflicts.
+
+**⚠️ IMPORTANT for RunPod users:** Always run the training/rendering commands in the **base environment** (no `conda activate` needed). If you activate conda, the NumPy conflicts will return.
+
+**Alternative (if you must use conda):**
 
 ```bash
-# Method 1: Force downgrade NumPy system-wide
+# Only try this if base environment doesn't work
 conda activate gs4d
 pip uninstall numpy -y
 conda install numpy=1.24.3 -c conda-forge --force-reinstall
 pip install numpy==1.24.3 --force-reinstall
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
-```
-
-If that doesn't work, use the RunPod-native installation:
-
-```bash
-# Method 2: Use RunPod's pre-installed PyTorch
-# Don't create conda environment, use base environment
-cd 4DGS_VibeCoded
-pip install -r requirements_runpod.txt --force-reinstall
-pip install gsplat==0.1.11
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
