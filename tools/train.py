@@ -27,24 +27,45 @@ def seed_everything(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
+def get_available_memory():
+    """Get available system and GPU memory."""
+    import psutil
+    
+    # Get system RAM
+    mem = psutil.virtual_memory()
+    available_ram_gb = mem.available / (1024**3)
+    total_ram_gb = mem.total / (1024**3)
+    
+    # Get GPU memory if available
+    available_vram_gb = 0
+    total_vram_gb = 0
+    if torch.cuda.is_available():
+        # Get free GPU memory
+        free_vram, total_vram = torch.cuda.mem_get_info()
+        available_vram_gb = free_vram / (1024**3)
+        total_vram_gb = total_vram / (1024**3)
+    
+    return available_ram_gb, total_ram_gb, available_vram_gb, total_vram_gb
+
 def main():
     parser = argparse.ArgumentParser(description='Train 4D Gaussian Splatting (from scratch)')
     parser.add_argument('--data_root', type=str, required=True)
     parser.add_argument('--mask_root', type=str, default=None, help='Optional mask folder; mask filenames should match image basenames')
     parser.add_argument('--out_dir', type=str, default='outputs/exp')
-    parser.add_argument('--iters', type=int, default=2000)
+    parser.add_argument('--iters', type=int, default=30000, help='Training iterations (more = better quality)')
     parser.add_argument('--lr', type=float, default=1e-2)
     parser.add_argument('--sh_degree', type=int, default=3)
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID to use (for multi-GPU systems)')
+    parser.add_argument('--gpu_id', type=int, default=-1, help='GPU ID to use (-1 for auto-select best GPU)')
     parser.add_argument('--save_every', type=int, default=500)
     parser.add_argument('--validate_every', type=int, default=100)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--max_points', type=int, default=20000, help='Maximum number of Gaussians (reduced default)')
+    parser.add_argument('--max_points', type=int, default=-1, help='Maximum Gaussians (-1 for auto based on GPU memory)')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
-    parser.add_argument('--max_frames', type=int, default=-1, help='Maximum frames to load (-1 for all)')
-    parser.add_argument('--max_memory_gb', type=float, default=8.0, help='Maximum memory for images (GB)')
-    parser.add_argument('--renderer', type=str, default='naive', choices=['naive','fast'], help='Renderer backend')
+    parser.add_argument('--max_frames', type=int, default=-1, help='Maximum frames to load (-1 for auto)')
+    parser.add_argument('--max_memory_gb', type=float, default=-1, help='Maximum RAM for images (-1 for auto 85% of available)')
+    parser.add_argument('--memory_fraction', type=float, default=0.85, help='Fraction of available memory to use (0.85 = 85%)')
+    parser.add_argument('--renderer', type=str, default='fast', choices=['naive','fast'], help='Renderer backend (fast recommended)')
     # Loss weights
     parser.add_argument('--w_ssim', type=float, default=0.2)
     parser.add_argument('--w_opa_mask', type=float, default=0.1)
@@ -64,23 +85,87 @@ def main():
 
     args = parser.parse_args()
     
+    # Import psutil for memory monitoring
+    import psutil
+    
+    # Get available resources
+    available_ram_gb, total_ram_gb, available_vram_gb, total_vram_gb = get_available_memory()
+    
+    print("\n" + "="*60)
+    print("           4D Gaussian Splatting Training")
     print("="*60)
-    print("4D Gaussian Splatting Training")
-    print("="*60)
-    print(f"Data root: {args.data_root}")
-    print(f"Output directory: {args.out_dir}")
-    print(f"Iterations: {args.iters}")
-    print(f"Max points: {args.max_points}")
-    print(f"Renderer: {args.renderer}")
-    print("="*60)
-
-    # Set GPU
+    
+    # Auto-detect and configure GPU
     if torch.cuda.is_available():
-        torch.cuda.set_device(args.gpu_id)
-        print(f"Using GPU {args.gpu_id}: {torch.cuda.get_device_name(args.gpu_id)}")
-        print(f"GPU Memory: {torch.cuda.get_device_properties(args.gpu_id).total_memory / 1e9:.2f} GB")
+        num_gpus = torch.cuda.device_count()
+        
+        if args.gpu_id == -1:
+            # Auto-select GPU with most free memory
+            best_gpu = 0
+            best_free_mem = 0
+            
+            for i in range(num_gpus):
+                torch.cuda.set_device(i)
+                free_mem, _ = torch.cuda.mem_get_info(i)
+                if free_mem > best_free_mem:
+                    best_free_mem = free_mem
+                    best_gpu = i
+            
+            args.gpu_id = best_gpu
+            torch.cuda.set_device(args.gpu_id)
+            print(f"\n🚀 Auto-selected GPU {args.gpu_id}: {torch.cuda.get_device_name(args.gpu_id)}")
+        else:
+            # Use specified GPU
+            torch.cuda.set_device(args.gpu_id)
+            print(f"\n🎯 Using specified GPU {args.gpu_id}: {torch.cuda.get_device_name(args.gpu_id)}")
+        
+        # Update available VRAM for the selected GPU
+        free_vram, total_vram = torch.cuda.mem_get_info(args.gpu_id)
+        available_vram_gb = free_vram / (1024**3)
+        total_vram_gb = total_vram / (1024**3)
     else:
-        print("WARNING: CUDA not available, using CPU (will be very slow)")
+        print("\n⚠️  No GPU available, using CPU (will be slow)")
+    
+    # Display system resources
+    print(f"\n📊 System Resources:")
+    print(f"   CPU RAM: {available_ram_gb:.1f}/{total_ram_gb:.1f} GB available")
+    if torch.cuda.is_available():
+        print(f"   GPU VRAM: {available_vram_gb:.1f}/{total_vram_gb:.1f} GB available")
+    
+    # Auto-configure memory limits based on available resources
+    if args.max_memory_gb == -1:
+        # Use 85% of available RAM by default (or user-specified fraction)
+        args.max_memory_gb = available_ram_gb * args.memory_fraction
+        print(f"\n🔧 Auto-configured memory limit: {args.max_memory_gb:.1f} GB ({args.memory_fraction*100:.0f}% of available)")
+    else:
+        print(f"\n📌 Using specified memory limit: {args.max_memory_gb:.1f} GB")
+    
+    # Auto-configure max points based on GPU memory
+    if args.max_points == -1 and torch.cuda.is_available():
+        # Estimate max points based on available VRAM
+        # Rough estimate: 100k points per GB of VRAM (conservative)
+        vram_for_points = available_vram_gb * args.memory_fraction
+        args.max_points = min(int(vram_for_points * 100_000), 1_000_000)  # Cap at 1M points
+        print(f"🔧 Auto-configured max points: {args.max_points:,} (based on {vram_for_points:.1f} GB VRAM)")
+    elif args.max_points == -1:
+        # CPU fallback
+        args.max_points = 50_000
+        print(f"🔧 Using default max points for CPU: {args.max_points:,}")
+    else:
+        print(f"📌 Using specified max points: {args.max_points:,}")
+    
+    # Auto-configure training iterations based on complexity
+    if args.iters == 30000 and args.max_points > 500_000:
+        # For complex scenes, increase iterations
+        args.iters = 50000
+        print(f"🔧 Auto-increased iterations to {args.iters:,} for complex scene")
+    
+    print(f"\n🎲 Random seed: {args.seed}")
+    print(f"🎨 Renderer: {args.renderer}")
+    print(f"🔄 Training iterations: {args.iters:,}")
+    print(f"📂 Data root: {args.data_root}")
+    print(f"💾 Output directory: {args.out_dir}")
+    print("\n" + "="*60)
     
     seed_everything(args.seed)
     device = torch.device(f'cuda:{args.gpu_id}' if torch.cuda.is_available() else 'cpu')

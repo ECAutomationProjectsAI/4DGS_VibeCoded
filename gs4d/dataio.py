@@ -35,7 +35,7 @@ def _maybe_load_mask(mask_path: str, H: int, W: int) -> Optional[torch.Tensor]:
     return mk
 
 
-def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = None, max_frames: int = -1, max_memory_gb: float = 8.0) -> Tuple[torch.Tensor, list, torch.Tensor, Optional[torch.Tensor]]:
+def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = None, max_frames: int = -1, max_memory_gb: float = -1) -> Tuple[torch.Tensor, list, torch.Tensor, Optional[torch.Tensor]]:
     """
     Expect structure:
     root/
@@ -49,11 +49,25 @@ def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = 
         root: Dataset root directory
         time_norm: Whether to normalize timestamps
         mask_root: Optional mask directory
-        max_frames: Maximum number of frames to load (-1 for all)
-        max_memory_gb: Maximum memory to use for images (in GB)
+        max_frames: Maximum number of frames to load (-1 for auto)
+        max_memory_gb: Maximum memory to use for images (-1 for auto-detect)
         
     Returns: images [F,3,H,W], cams list, times [F,1], masks [F,1,H,W] or None
     """
+    # Auto-detect memory if needed
+    if max_memory_gb == -1:
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            available_gb = mem.available / (1024**3)
+            # Use 85% of available memory by default
+            max_memory_gb = available_gb * 0.85
+            print(f"  Auto-detected memory limit: {max_memory_gb:.1f} GB (85% of {available_gb:.1f} GB available)")
+        except ImportError:
+            # Fallback if psutil not available
+            max_memory_gb = 8.0
+            print(f"  Using default memory limit: {max_memory_gb:.1f} GB")
+    
     meta = load_transforms(os.path.join(root, 'transforms.json'))
     H, W = int(meta['h']), int(meta['w'])
     fx, fy = float(meta['fl_x']), float(meta['fl_y'])
@@ -68,10 +82,15 @@ def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = 
     memory_per_frame_gb = (H * W * channels * bytes_per_pixel) / (1024**3)
     total_frames = len(frames)
     
-    # Check memory and limit frames if needed
-    if max_frames > 0:
+    # Auto-detect max frames based on memory if not specified
+    if max_frames == -1:
+        max_frames = int(max_memory_gb / memory_per_frame_gb)
+        print(f"  Auto-calculated max frames: {max_frames} (based on {max_memory_gb:.1f} GB limit)")
+    
+    # Apply frame limits
+    if max_frames > 0 and max_frames < len(frames):
         frames = frames[:max_frames]
-        print(f"  Limiting to {max_frames} frames (from {total_frames} total)")
+        print(f"  Loading {max_frames} frames (from {total_frames} total)")
     
     expected_memory_gb = len(frames) * memory_per_frame_gb
     if expected_memory_gb > max_memory_gb:
@@ -80,7 +99,7 @@ def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = 
         print(f"  Limiting to {max_allowed_frames} frames to stay under {max_memory_gb:.2f} GB")
         frames = frames[:max_allowed_frames]
     
-    print(f"  Loading {len(frames)} frames ({len(frames) * memory_per_frame_gb:.2f} GB)...")
+    print(f"  Loading {len(frames)} frames ({len(frames) * memory_per_frame_gb:.2f} GB estimated)...")
     
     images = []
     cams = []

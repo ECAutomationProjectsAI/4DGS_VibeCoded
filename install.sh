@@ -79,6 +79,7 @@ $PIP_CMD install scikit-learn>=0.24.0 --no-cache-dir
 echo "  - Utilities"
 $PIP_CMD install tqdm>=4.62.0 --no-cache-dir
 $PIP_CMD install PyYAML>=5.4.0 --no-cache-dir
+$PIP_CMD install psutil>=5.8.0 --no-cache-dir
 
 echo "  - Data handling"
 $PIP_CMD install pandas>=1.3.0 --no-cache-dir
@@ -148,6 +149,7 @@ $PYTHON_CMD -c "import sklearn; print('✓ scikit-learn: OK')" 2>/dev/null || { 
 # Utilities
 $PYTHON_CMD -c "import tqdm; print('✓ tqdm: OK')" 2>/dev/null || { echo "✗ tqdm: FAILED"; FAILED=1; }
 $PYTHON_CMD -c "import yaml; print('✓ PyYAML: OK')" 2>/dev/null || { echo "✗ PyYAML: FAILED"; FAILED=1; }
+$PYTHON_CMD -c "import psutil; print('✓ psutil: OK')" 2>/dev/null || { echo "✗ psutil: FAILED"; FAILED=1; }
 
 # Data handling
 $PYTHON_CMD -c "import pandas; print('✓ pandas: OK')" 2>/dev/null || { echo "✗ pandas: FAILED"; FAILED=1; }

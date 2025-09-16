@@ -241,34 +241,57 @@ python tools/preprocess_video.py masked_video.mp4 -o dataset/ \
 
 ### Step 2: Train 4DGS Model
 
+#### 🚀 NEW: Automatic Resource Detection!
+The training script now **automatically optimizes** for your hardware:
+
 ```bash
-# Basic training
-python tools/train.py --data_root dataset/ --out_dir model/ --iters 10000
+# Just run - everything auto-configured!
+python tools/train.py --data_root dataset/ --out_dir model/
 
-# Production training with CUDA acceleration
+# The script will:
+# ✓ Auto-detect available CPU RAM and use 85% efficiently
+# ✓ Auto-select GPU with most free VRAM
+# ✓ Auto-calculate optimal max points based on GPU memory  
+# ✓ Auto-adjust frame loading based on available memory
+# ✓ Auto-scale training iterations for scene complexity
+```
+
+#### Basic Training Examples
+
+```bash
+# Simplest - full auto mode
+python tools/train.py --data_root dataset/ --out_dir model/
+
+# With some preferences
 python tools/train.py \
     --data_root dataset/ \
     --out_dir model/ \
-    --iters 30000 \
-    --renderer fast \
-    --w_temporal 0.01 \
-    --sh_degree 3
+    --renderer fast           # Use CUDA acceleration\
+    --w_temporal 0.01         # Temporal smoothness
 
-# For limited GPU memory (<8GB)
+# Override auto-detection if needed
 python tools/train.py \
     --data_root dataset/ \
     --out_dir model/ \
-    --max_points 20000 \
-    --sh_degree 1 \
-    --iters 10000
+    --max_points 50000        # Force max Gaussians (auto: based on VRAM)\
+    --max_memory_gb 16        # Force RAM limit (auto: 85% of available)\
+    --gpu_id 1                # Force GPU selection (auto: best available)\
+    --memory_fraction 0.9     # Use 90% of resources (default: 85%)
 ```
 
 #### Key Training Parameters
-- `--iters`: Number of training iterations (10000-50000 recommended)
-- `--renderer`: Use 'fast' for CUDA acceleration, 'naive' for compatibility
-- `--w_temporal`: Temporal consistency weight (0.01-0.05)
-- `--sh_degree`: Spherical harmonics degree (0-3, higher = better color)
-- `--max_points`: Maximum Gaussians (20000-100000 based on GPU memory)
+
+**Auto-Detected (no need to set):**
+- `--max_points`: Automatically set based on GPU VRAM (~100k per GB)
+- `--max_memory_gb`: Uses 85% of available RAM by default
+- `--gpu_id`: Selects GPU with most free memory (-1 for auto)
+- `--iters`: 30k for simple scenes, 50k for complex (auto-adjusted)
+
+**Manual Tuning (optional):**
+- `--renderer`: 'fast' for CUDA, 'naive' for compatibility
+- `--w_temporal`: Temporal consistency (0.01-0.05)
+- `--sh_degree`: Color complexity (0-3, higher = better)
+- `--memory_fraction`: Safety margin (0.85 = use 85% of resources)
 
 
 ### Step 3: Render Output
