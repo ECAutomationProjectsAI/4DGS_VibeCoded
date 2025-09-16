@@ -100,10 +100,23 @@ else
     echo "Skipping gsplat (requires CUDA)"
 fi
 
+# Install the gs4d package in development mode
+echo ""
+echo "Step 8: Installing gs4d package in development mode..."
+if [ -f "setup.py" ]; then
+    $PIP_CMD install -e . --no-deps
+    echo "✓ gs4d package installed in development mode"
+else
+    echo "⚠ Warning: setup.py not found. Running from source directory."
+    echo "  You may need to run scripts with: python3 tools/script.py"
+    echo "  Or add the project directory to PYTHONPATH:"
+    echo "  export PYTHONPATH=\$PYTHONPATH:\$(pwd)"
+fi
+
 # Comprehensive verification
 echo ""
 echo "=========================================="
-echo "Step 8: Verifying installation..."
+echo "Step 9: Verifying installation..."
 echo "=========================================="
 
 echo ""
@@ -160,14 +173,14 @@ echo "=========================================="
 echo ""
 echo "Quick start commands:"
 echo ""
-echo "1. Process a video:"
-echo "   python3 tools/preprocess_video.py your_video.mp4 -o dataset/"
+echo "Option A: If gs4d package was installed:"
+echo "  1. Process: python3 tools/preprocess_video.py your_video.mp4 -o dataset/"
+echo "  2. Train:   python3 tools/train.py --data_root dataset/ --out_dir model/"
+echo "  3. Render:  python3 tools/render.py --data_root dataset/ --ckpt model/model_final.pt --out_dir renders/"
 echo ""
-echo "2. Train the model:"
-echo "   python3 tools/train.py --data_root dataset/ --out_dir model/ --renderer fast"
+echo "Option B: If running from source (without package install):"
+echo "  Set PYTHONPATH first: export PYTHONPATH=\$PYTHONPATH:\$(pwd)"
+echo "  Or use run.sh:        bash run.sh tools/train.py --data_root dataset/"
 echo ""
-echo "3. Render results:"
-echo "   python3 tools/render.py --data_root dataset/ --ckpt model/model_final.pt --out_dir renders/"
-echo ""
-echo "Note: Use python3 directly - no environment activation needed!"
+echo "Note: No environment activation needed - just run commands directly!"
 echo ""

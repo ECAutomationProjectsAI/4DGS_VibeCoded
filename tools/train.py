@@ -1,10 +1,14 @@
 import os
+import sys
 import json
 import math
 import argparse
 import torch
 import numpy as np
 from tqdm import tqdm
+
+# Add parent directory to path to import gs4d module
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gs4d.gaussians import GaussianModel4D
 from gs4d.dataio import load_sequence

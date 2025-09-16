@@ -1,7 +1,12 @@
 import os
+import sys
 import argparse
 import torch
 import imageio.v2 as imageio
+
+# Add parent directory to path to import gs4d module
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from gs4d.losses import psnr
 from gs4d.dataio import load_sequence
 

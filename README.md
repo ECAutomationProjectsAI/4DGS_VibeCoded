@@ -362,6 +362,20 @@ The system produces dynamic 3D reconstructions with quality dependent on:
 
 ## Troubleshooting
 
+### ModuleNotFoundError: No module named 'gs4d'
+If you get "No module named 'gs4d'" error:
+```bash
+# Option 1: Install package in development mode (best)
+cd 4DGS_VibeCoded
+pip3 install -e . --no-deps
+
+# Option 2: Set PYTHONPATH
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+
+# Option 3: Use the run.sh helper script
+bash run.sh tools/train.py --data_root dataset/
+```
+
 ### ModuleNotFoundError (cv2, imageio, etc.)
 If you get module not found errors, the dependencies aren't installed:
 ```bash
