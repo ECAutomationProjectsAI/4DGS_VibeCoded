@@ -94,7 +94,17 @@ class VideoProcessor:
         # Open video
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
-            raise RuntimeError(f"Failed to open video: {video_path}")
+            error_msg = f"Failed to open video: {video_path} - File may be corrupted or unsupported format"
+            logger.error(error_msg)
+            # Return minimal metadata for failed video
+            return {
+                "camera_name": camera_name,
+                "error": error_msg,
+                "calibration": calibration,
+                "frames": [],
+                "fps": 0,
+                "resolution": [0, 0]
+            }
         
         # Get video properties
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -188,8 +198,11 @@ class VideoProcessor:
         all_metadata = {
             "cameras": {},
             "frames": [],
-            "sync_method": sync_method
+            "sync_method": sync_method,
+            "failed_videos": []  # Track failed videos
         }
+        
+        successful_cameras = 0
         
         # Process each camera
         for cam_config in cameras:
@@ -198,25 +211,70 @@ class VideoProcessor:
             # Adjust start time based on sync offset
             start_time = cam_config.sync_offset
             
-            cam_metadata = self.process_single_camera_video(
-                video_path=cam_config.video_path,
-                camera_name=cam_config.name,
-                calibration=cam_config.calibration,
-                start_time=start_time
-            )
-            
-            all_metadata["cameras"][cam_config.name] = {
-                "calibration": cam_metadata["calibration"],
-                "fps": cam_metadata["fps"],
-                "resolution": cam_metadata["resolution"]
-            }
-            
-            # Add frames with camera info
-            for frame in cam_metadata["frames"]:
-                all_metadata["frames"].append(frame)
+            try:
+                cam_metadata = self.process_single_camera_video(
+                    video_path=cam_config.video_path,
+                    camera_name=cam_config.name,
+                    calibration=cam_config.calibration,
+                    start_time=start_time
+                )
+                
+                # Check if video processing failed
+                if "error" in cam_metadata:
+                    all_metadata["failed_videos"].append({
+                        "camera": cam_config.name,
+                        "path": cam_config.video_path,
+                        "error": cam_metadata["error"]
+                    })
+                    logger.warning(f"Skipping failed video: {cam_config.name}")
+                    continue
+                
+                # Only add successful cameras
+                if cam_metadata["frames"]:
+                    successful_cameras += 1
+                    all_metadata["cameras"][cam_config.name] = {
+                        "calibration": cam_metadata["calibration"],
+                        "fps": cam_metadata["fps"],
+                        "resolution": cam_metadata["resolution"]
+                    }
+                    
+                    # Add frames with camera info
+                    for frame in cam_metadata["frames"]:
+                        all_metadata["frames"].append(frame)
+                        
+            except Exception as e:
+                error_msg = f"Unexpected error processing {cam_config.name}: {str(e)}"
+                logger.error(error_msg)
+                all_metadata["failed_videos"].append({
+                    "camera": cam_config.name,
+                    "path": cam_config.video_path,
+                    "error": error_msg
+                })
+        
+        # Check if we have at least one successful camera
+        if successful_cameras == 0:
+            logger.error("No videos could be processed successfully!")
+            logger.error("Failed videos:")
+            for failed in all_metadata["failed_videos"]:
+                logger.error(f"  - {failed['camera']}: {failed['error']}")
+            raise RuntimeError("All videos failed to process. Please check your input files.")
         
         # Sort frames by timestamp for proper temporal ordering
-        all_metadata["frames"].sort(key=lambda x: (x["time"], x["camera"]))
+        if all_metadata["frames"]:
+            all_metadata["frames"].sort(key=lambda x: (x["time"], x["camera"]))
+        
+        # Print summary
+        logger.info("="*50)
+        logger.info(f"Processing Summary:")
+        logger.info(f"  Successful cameras: {successful_cameras}/{len(cameras)}")
+        logger.info(f"  Total frames extracted: {len(all_metadata['frames'])}")
+        
+        if all_metadata["failed_videos"]:
+            logger.warning(f"  Failed videos: {len(all_metadata['failed_videos'])}")
+            for failed in all_metadata["failed_videos"]:
+                logger.warning(f"    - {failed['camera']}: {failed['path']}")
+                logger.warning(f"      Error: {failed['error']}")
+        logger.info("="*50)
         
         # Save metadata
         self._save_metadata(all_metadata)

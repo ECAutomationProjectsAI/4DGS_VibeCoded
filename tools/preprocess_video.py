@@ -220,6 +220,11 @@ Output structure:
             start_time=args.start,
             end_time=args.end
         )
+        
+        # Check if single video failed
+        if "error" in metadata:
+            logger.error(f"Failed to process video: {metadata['error']}")
+            sys.exit(1)
     
     # Create transforms.json for training
     transforms = processor.create_transforms_json(metadata)
@@ -248,13 +253,30 @@ Output structure:
         for cam_name, cam_info in metadata['cameras'].items():
             print(f"  - {cam_name}: {cam_info['resolution'][0]}x{cam_info['resolution'][1]} @ {cam_info['fps']:.1f} fps")
     
+    # Report failed videos if any
+    if metadata.get('failed_videos'):
+        print("\n" + "="*50)
+        print("WARNING: Some videos failed to process:")
+        print("="*50)
+        for failed in metadata['failed_videos']:
+            print(f"  ✗ {failed['camera']}: {failed['path']}")
+            print(f"    Reason: {failed['error'][:100]}...")  # Truncate long errors
+        print("="*50)
+        print(f"Successfully processed: {len(metadata.get('cameras', {}))} videos")
+        print(f"Failed: {len(metadata['failed_videos'])} videos")
+        print("Continuing with available videos...")
+        print("="*50)
+    
     # Print time range
     times = [f['time'] for f in transforms['frames']]
     if times:
-        print(f"Time range: {min(times):.2f} - {max(times):.2f} seconds")
+        print(f"\nTime range: {min(times):.2f} - {max(times):.2f} seconds")
     
-    print("\nReady for training with:")
-    print(f"  python train.py --data_root {args.output}")
+    if len(transforms['frames']) > 0:
+        print("\nReady for training with:")
+        print(f"  python tools/train.py --data_root {args.output}")
+    else:
+        print("\nWARNING: No frames were extracted. Check your input videos.")
     print("="*50)
 
 
