@@ -89,8 +89,11 @@ This project is optimized for:
 git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
 cd 4DGS_VibeCoded
 
-# 2. Run installation script
+# 2. Run installation script (REQUIRED - installs all dependencies)
 bash install.sh
+
+# 3. Verify installation worked
+python -c "import cv2, imageio, numpy; print('Dependencies OK')"
 ```
 
 #### Manual Install
@@ -358,6 +361,17 @@ The system produces dynamic 3D reconstructions with quality dependent on:
 - Training iterations (more = better convergence)
 
 ## Troubleshooting
+
+### ModuleNotFoundError (cv2, imageio, etc.)
+If you get module not found errors, the dependencies aren't installed:
+```bash
+# Quick fix - run the installation
+bash install.sh
+
+# Or manually install dependencies
+pip install -r requirements_runpod.txt --force-reinstall
+pip install gsplat==0.1.11
+```
 
 ### NumPy Compatibility Error
 If you see "A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x":
