@@ -1,0 +1,71 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+.venv*/
+venv/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTorch
+*.pt
+*.pth
+*.ckpt
+
+# Data & outputs
+outputs/
+checkpoints/
+logs/
+wandb/
+
+# Datasets
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Cache
+.mypy_cache/
+.pytest_cache/
+
+# VSCode / IDE
+.vscode/
+.idea/
+
+# Docker
+**/.dockerignore
+
+# Images / renders
+renders/
+
+# Temp
+/tmp/

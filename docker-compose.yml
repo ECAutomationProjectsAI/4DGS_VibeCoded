@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  gs4d:
+    build: .
+    image: gs4d:latest
+    container_name: gs4d
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    device_requests:
+      - driver: nvidia
+        count: -1
+        capabilities: ["gpu"]
+    command: ["python3", "tools/train.py", "--help"]

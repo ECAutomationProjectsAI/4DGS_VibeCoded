@@ -1,0 +1,242 @@
+# 4D Gaussian Splatting (4DGS)
+
+## Overview
+
+4D Gaussian Splatting is a method for reconstructing and rendering dynamic 3D scenes from video sequences. This implementation extends 3D Gaussian Splatting to handle temporal dynamics through velocity-based motion modeling, enabling real-time photorealistic rendering of moving objects and scenes.
+
+## Key Techniques
+
+- **4D Gaussian Primitives**: Each Gaussian has position, scale, rotation, opacity, color (spherical harmonics), and velocity components
+- **Velocity-based Motion Model**: Positions evolve over time as x(t) = x₀ + v*t
+- **Temporal Consistency**: Specialized losses ensure smooth motion without flickering
+- **Differentiable Rendering**: Full gradient flow for end-to-end optimization
+- **CUDA Acceleration**: Optional gsplat backend for 10-100x faster training
+
+## Major Dependencies
+
+- **PyTorch 2.2.2** with CUDA 12.1 support
+- **gsplat 0.1.11** - CUDA-accelerated rasterizer from nerfstudio (optional but recommended)
+- **OpenCV** - Video processing and frame extraction
+- **imageio-ffmpeg** - Video I/O support
+
+
+## Hardware Requirements
+
+### Minimum
+- **CPU**: 4+ cores
+- **RAM**: 16 GB
+- **GPU**: NVIDIA GTX 1060 6GB (CUDA 11.0+)
+- **Storage**: 50 GB
+
+### Recommended
+- **CPU**: 8+ cores
+- **RAM**: 32 GB
+- **GPU**: NVIDIA RTX 3070 8GB or better
+- **Storage**: 100 GB SSD
+
+### Performance Guide
+- **GTX 1060 (6GB)**: 720p videos, 10-sec sequences, ~5 min per 1000 iterations
+- **RTX 3070 (8GB)**: 1080p videos, 20-sec sequences, ~2 min per 1000 iterations
+- **RTX 4090 (24GB)**: 4K videos, 60-sec sequences, ~30 sec per 1000 iterations
+
+
+## Installation
+
+### Prerequisites
+- Python 3.8-3.10
+- CUDA 11.8 or 12.1
+- NVIDIA GPU with compute capability 6.0+
+
+### Steps
+
+```bash
+# 1. Clone repository
+git clone <repository-url>
+cd 4dgs-project
+
+# 2. Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# OR
+venv\Scripts\activate     # Windows
+
+# 3. Install PyTorch with CUDA
+pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
+
+# 4. Install dependencies
+pip install -r requirements.txt
+
+# 5. Install CUDA acceleration (optional but recommended)
+pip install gsplat==0.1.11
+
+# 6. Verify installation
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
+### Docker Alternative
+
+```bash
+# Build image
+docker build -t gs4d:latest .
+
+# Run with GPU
+docker run --gpus all -it gs4d:latest
+```
+
+
+## Input Data Requirements
+
+### Supported Formats
+- **Video files**: MP4, AVI, MOV, MKV (any OpenCV-supported format)
+- **Image sequences**: JPG, PNG frames with transforms.json
+- **Other 4DGS formats**: SpacetimeGaussian PLY, Fudan 4DGS checkpoints
+
+### Data Structure After Processing
+```
+dataset/
+├── frames/           # Extracted frames
+│   ├── cam0/        # Camera 0 (required)
+│   ├── cam1/        # Camera 1 (optional)
+│   └── ...
+├── transforms.json   # Camera parameters & timestamps
+└── metadata.json     # Processing information
+```
+
+
+## Step-by-Step Workflow
+
+### Step 1: Prepare Video Data
+
+```bash
+# Single video
+python tools/preprocess_video.py input_video.mp4 -o dataset/
+
+# Multiple synchronized cameras
+python tools/preprocess_video.py cam0.mp4 cam1.mp4 cam2.mp4 -o dataset/ \
+    --camera-names front left right
+
+# With preprocessing options
+python tools/preprocess_video.py video.mp4 -o dataset/ \
+    --start 10 --end 30           # Extract 10-30 seconds
+    --resize 1280 720              # Resize to 720p
+    --extract-every 2              # Extract every 2nd frame
+```
+
+### Step 2: Train 4DGS Model
+
+```bash
+# Basic training
+python tools/train.py --data_root dataset/ --out_dir model/ --iters 10000
+
+# Production training with CUDA acceleration
+python tools/train.py \
+    --data_root dataset/ \
+    --out_dir model/ \
+    --iters 30000 \
+    --renderer fast \
+    --w_temporal 0.01 \
+    --sh_degree 3
+
+# For limited GPU memory (<8GB)
+python tools/train.py \
+    --data_root dataset/ \
+    --out_dir model/ \
+    --max_points 20000 \
+    --sh_degree 1 \
+    --iters 10000
+```
+
+#### Key Training Parameters
+- `--iters`: Number of training iterations (10000-50000 recommended)
+- `--renderer`: Use 'fast' for CUDA acceleration, 'naive' for compatibility
+- `--w_temporal`: Temporal consistency weight (0.01-0.05)
+- `--sh_degree`: Spherical harmonics degree (0-3, higher = better color)
+- `--max_points`: Maximum Gaussians (20000-100000 based on GPU memory)
+
+
+### Step 3: Render Output
+
+```bash
+# Basic rendering
+python tools/render.py \
+    --data_root dataset/ \
+    --ckpt model/model_final.pt \
+    --out_dir renders/
+
+# High-quality rendering
+python tools/render.py \
+    --data_root dataset/ \
+    --ckpt model/model_final.pt \
+    --out_dir renders/ \
+    --renderer fast
+```
+
+### Step 4: Evaluate Results (Optional)
+
+```bash
+# Calculate PSNR and other metrics
+python tools/evaluate.py --data_root dataset/ --renders_dir renders/
+```
+
+## Additional Tools
+
+### Format Conversion
+
+```bash
+# From SpacetimeGaussian PLY format
+python tools/convert.py input.ply output.pt --from spacetime --to gs4d
+
+# From Fudan 4DGS checkpoint
+python tools/convert.py checkpoint.pth output.pt --from fudan --to gs4d
+
+# To SpacetimeGaussian PLY format
+python tools/convert.py model.pt output.ply --from gs4d --to spacetime
+```
+
+### Generate Synthetic Test Data
+
+```bash
+# Create synthetic dataset for testing
+python tools/prepare_synthetic.py --out_root test_data/ --frames 10 --H 256 --W 256
+```
+
+
+## Output
+
+After completing the workflow, you will have:
+
+1. **Trained Model** (`model/model_final.pt`): 4D Gaussian representation of your scene
+2. **Rendered Frames** (`renders/`): Reconstructed video frames from novel viewpoints
+3. **Metrics** (optional): PSNR, SSIM values for quality assessment
+
+The system produces high-quality dynamic 3D reconstructions that can be:
+- Rendered from arbitrary viewpoints
+- Played back at different speeds
+- Exported to other 4DGS formats
+- Used for downstream applications (VR, AR, video editing)
+
+## Troubleshooting
+
+### CUDA Out of Memory
+- Reduce `--max_points` (e.g., 20000)
+- Lower resolution with `--resize 960 540`
+- Extract fewer frames with `--extract-every 3`
+
+### Poor Quality
+- Increase iterations: `--iters 50000`
+- Adjust temporal weight: `--w_temporal 0.02`
+- Use stable footage with good lighting
+- Add more camera viewpoints if possible
+
+### Slow Training
+- Enable CUDA: `--renderer fast`
+- Lower SH degree: `--sh_degree 1`
+- Reduce point count: `--max_points 30000`
+
+## References
+
+This implementation integrates techniques from:
+- [3D Gaussian Splatting](https://github.com/graphdeco-insa/gaussian-splatting) - Base 3DGS method
+- [SpacetimeGaussian](https://github.com/oppo-us-research/SpacetimeGaussian) - Temporal extension
+- [Fudan 4DGS](https://github.com/fudan-zvg/4d-gaussian-splatting) - 4D primitives
+- [gsplat](https://github.com/nerfstudio-project/gsplat) - CUDA acceleration

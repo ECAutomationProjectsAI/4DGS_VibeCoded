@@ -1,0 +1,12 @@
+{
+  "name": "synth_tiny",
+  "data_root": "data/synth_tiny",
+  "out_dir": "outputs/synth_tiny",
+  "iters": 300,
+  "lr": 0.01,
+  "sh_degree": 2,
+  "device": "cuda",
+  "save_every": 150,
+  "validate_every": 50,
+  "max_points": 4000
+}
