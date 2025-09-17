@@ -356,26 +356,36 @@ def main():
         
         # Add temporal consistency loss
         if args.w_temporal > 0 and F > 1:
-            # Sample a temporal window
-            window_size = min(args.temporal_window, F)
-            if fidx + window_size <= F:
-                time_indices = torch.arange(fidx, min(fidx + window_size, F))
+            # Disable temporal loss if too many points (to avoid OOM)
+            if model.xyz.shape[0] > 50000:
+                # Skip temporal loss for large point clouds
+                L_temporal = 0.0
             else:
-                time_indices = torch.arange(max(0, fidx - window_size + 1), fidx + 1)
-            
-            if len(time_indices) > 1:
-                # Get timestamps for the window
-                window_times = times[time_indices, 0].to(device)
+                # Sample a temporal window
+                window_size = min(args.temporal_window, F)
+                if fidx + window_size <= F:
+                    time_indices = torch.arange(fidx, min(fidx + window_size, F))
+                else:
+                    time_indices = torch.arange(max(0, fidx - window_size + 1), fidx + 1)
                 
-                # Compute temporal regularization
-                L_temporal = temporal_consistency_regularizer(
-                    model,
-                    window_times,
-                    base_weight=1.0,
-                    use_knn=True,
-                    k_neighbors=5
-                )
-                loss = loss + args.w_temporal * L_temporal
+                if len(time_indices) > 1:
+                    # Get timestamps for the window
+                    window_times = times[time_indices, 0].to(device)
+                    
+                    # Compute temporal regularization with reduced neighbors
+                    try:
+                        L_temporal = temporal_consistency_regularizer(
+                            model,
+                            window_times,
+                            base_weight=1.0,
+                            use_knn=True,
+                            k_neighbors=3  # Reduced from 5 to save memory
+                        )
+                        loss = loss + args.w_temporal * L_temporal
+                    except torch.cuda.OutOfMemoryError:
+                        # If still OOM, skip temporal loss
+                        print(f"\n⚠️ WARNING: Skipping temporal loss due to memory constraints")
+                        L_temporal = 0.0
 
         # Backprop
         loss.backward()

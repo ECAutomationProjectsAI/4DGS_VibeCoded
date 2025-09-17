@@ -312,16 +312,50 @@ def compute_knn_indices(positions: torch.Tensor, k: int = 10) -> torch.Tensor:
     Returns:
         Neighbor indices (N, k)
     """
-    # Compute pairwise distances
-    dist_matrix = torch.cdist(positions, positions)  # (N, N)
+    N = positions.shape[0]
+    max_points_for_knn = 5000  # Limit to avoid OOM
     
-    # Find k+1 nearest (including self), then exclude self
-    _, indices = torch.topk(dist_matrix, k + 1, dim=1, largest=False)
-    
-    # Remove self (first index)
-    neighbor_indices = indices[:, 1:]  # (N, k)
-    
-    return neighbor_indices
+    # If too many points, subsample for KNN
+    if N > max_points_for_knn:
+        # Randomly sample subset for KNN
+        sample_idx = torch.randperm(N, device=positions.device)[:max_points_for_knn]
+        sampled_pos = positions[sample_idx]
+        
+        # Compute KNN on sampled points only
+        dist_matrix = torch.cdist(sampled_pos, sampled_pos)  # (sample, sample)
+        _, local_indices = torch.topk(dist_matrix, min(k + 1, sampled_pos.shape[0]), 
+                                      dim=1, largest=False)
+        
+        # Map back to global indices
+        neighbor_indices = sample_idx[local_indices[:, 1:]]  # Skip self
+        
+        # For all points, create neighbor list (sampled points get real neighbors)
+        all_neighbors = torch.zeros(N, k, dtype=torch.long, device=positions.device)
+        all_neighbors[sample_idx] = neighbor_indices
+        
+        # Unsampled points get random neighbors (approximation)
+        unsampled = torch.ones(N, dtype=torch.bool, device=positions.device)
+        unsampled[sample_idx] = False
+        if unsampled.any():
+            # Each unsampled point gets random sampled points as neighbors
+            for i in unsampled.nonzero().squeeze(-1):
+                rand_neighbors = sample_idx[torch.randperm(len(sample_idx))[:k]]
+                all_neighbors[i] = rand_neighbors
+        
+        return all_neighbors
+    else:
+        # Original computation for small point clouds
+        dist_matrix = torch.cdist(positions, positions)  # (N, N)
+        _, indices = torch.topk(dist_matrix, min(k + 1, N), dim=1, largest=False)
+        neighbor_indices = indices[:, 1:min(k+1, indices.shape[1])]  # Skip self
+        
+        # Pad if needed
+        if neighbor_indices.shape[1] < k:
+            pad_size = k - neighbor_indices.shape[1]
+            padding = torch.zeros(N, pad_size, dtype=torch.long, device=positions.device)
+            neighbor_indices = torch.cat([neighbor_indices, padding], dim=1)
+        
+        return neighbor_indices
 
 
 def temporal_consistency_regularizer(
