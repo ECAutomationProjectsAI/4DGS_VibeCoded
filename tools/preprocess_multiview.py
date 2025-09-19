@@ -704,6 +704,8 @@ def main():
                        help='Target frame rate (default: 30)')
     parser.add_argument('--skip_frames', type=int, default=1,
                        help='Extract every N frames (default: 1)')
+    parser.add_argument('--resize', nargs=2, type=int, metavar=('WIDTH', 'HEIGHT'),
+                       help='Resize frames to WIDTH HEIGHT (e.g., 1920 1080)')
     parser.add_argument('--max_frames', type=int, default=-1,
                        help='Maximum frames to extract (-1 for all)')
     parser.add_argument('--use_gpu', action='store_true',
@@ -721,13 +723,14 @@ def main():
     if args.video_folder:
         logger.info(f"Processing all videos in folder: {args.video_folder}")
         
+        resize_tuple = tuple(args.resize) if args.resize else None
         result = preprocessor.process_video_folder(
             video_folder=args.video_folder,
             output_dir=args.output,
             fps=int(args.fps),
             skip_frames=args.skip_frames,
-            resize=None,  # TODO: Add resize option to args if needed
-            start_time=0.0,  # TODO: Add time range options if needed
+            resize=resize_tuple,
+            start_time=0.0,
             end_time=None
         )
         
