@@ -355,36 +355,41 @@ class MultiViewPreprocessor:
         for vf, cn in zip(video_files, camera_names):
             logger.info(f"  {vf.name} -> camera name: {cn}")
         
+        # Initialize video processor for output directory
+        from gs4d.video_processor import VideoProcessor
+        processor = VideoProcessor(
+            output_dir=str(self.output_dir),
+            target_fps=fps,
+            resize=resize,
+            extract_every_n=skip_frames,
+            use_gpu=self.use_gpu
+        )
+        
         # Process each video
         frame_metadata = []
         for video_file, camera_name in zip(video_files, camera_names):
             logger.info(f"\nProcessing {video_file.name} as camera '{camera_name}'...")
             
-            # Create camera-specific output directory
-            cam_frames_dir = self.frames_dir / camera_name
-            cam_frames_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Initialize video processor for this video
-            from gs4d.video_processor import VideoProcessor
-            processor = VideoProcessor(str(video_file), camera_name=camera_name)
-            
-            # Extract frames
-            frames_info = processor.extract_frames(
-                output_dir=str(cam_frames_dir),
-                fps=fps,
-                skip_frames=skip_frames,
-                resize=resize,
+            # Process this video
+            camera_metadata = processor.process_single_camera_video(
+                video_path=str(video_file),
+                camera_name=camera_name,
                 start_time=start_time,
                 end_time=end_time
             )
             
-            # Add camera-specific metadata
-            for frame in frames_info:
-                frame['camera'] = camera_name
-                frame['file_path'] = str(Path(camera_name) / Path(frame['file_path']).name)
-                frame_metadata.append(frame)
+            # Check for errors
+            if 'error' in camera_metadata:
+                logger.error(f"Failed to process {video_file.name}: {camera_metadata['error']}")
+                continue
+            
+            # Add frames to metadata
+            frame_metadata.extend(camera_metadata['frames'])
         
         logger.info(f"\nExtracted {len(frame_metadata)} total frames from {len(video_files)} cameras")
+        
+        # Initialize COLMAP status
+        colmap_success = False
         
         # Run COLMAP if we have multiple views
         if len(video_files) > 1:
@@ -410,8 +415,11 @@ class MultiViewPreprocessor:
                 logger.warning("COLMAP failed. You may need to provide manual calibration.")
         else:
             logger.info("Single video detected. Skipping COLMAP (not needed for single view)")
-            
-            # Generate simple transforms for single camera
+            colmap_success = False
+        
+        # Always generate transforms - either from COLMAP or with defaults
+        if not colmap_success or len(video_files) == 1:
+            # Generate simple transforms for single camera or COLMAP failure
             transforms = {
                 'frames': frame_metadata,
                 'camera_angle_x': 1.0,  # Default, will need calibration
@@ -717,7 +725,10 @@ def main():
             video_folder=args.video_folder,
             output_dir=args.output,
             fps=int(args.fps),
-            skip_frames=args.skip_frames
+            skip_frames=args.skip_frames,
+            resize=None,  # TODO: Add resize option to args if needed
+            start_time=0.0,  # TODO: Add time range options if needed
+            end_time=None
         )
         
         if result['success']:
@@ -748,19 +759,24 @@ def main():
         elif len(args.camera_names) != len(args.videos):
             logger.error(f"Number of camera names ({len(args.camera_names)}) must match videos ({len(args.videos)})")
             sys.exit(1)
-    
-    result = preprocessor.process_videos(
-        video_paths=args.videos,
-        camera_names=args.camera_names,
-        calibration_file=args.calibration,
-        target_fps=args.fps,
-        extract_every_n=args.skip_frames,
-        max_frames=args.max_frames
-    )
-    
-    if result:
-        print(f"\n✅ Ready for training!")
-        print(f"Run: python tools/train.py --data_root {result['output_dir']}")
+        
+        # Process individual videos
+        result = preprocessor.process_videos(
+            video_paths=args.videos,
+            camera_names=args.camera_names,
+            calibration_file=args.calibration,
+            target_fps=args.fps,
+            extract_every_n=args.skip_frames,
+            max_frames=args.max_frames
+        )
+        
+        if result:
+            print("\n" + "="*60)
+            print("✅ PREPROCESSING COMPLETE")
+            print("="*60)
+            print(f"Output directory: {result['output_dir']}")
+            print("\nNext step:")
+            print(f"  python tools/train.py --data_root {result['output_dir']} --out_dir model/")
 
 
 if __name__ == '__main__':
