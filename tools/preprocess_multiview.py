@@ -96,9 +96,7 @@ class MultiViewPreprocessor:
             "colmap", "feature_extractor",
             "--database_path", str(database_path),
             "--image_path", str(image_dir),
-            "--ImageReader.camera_model", camera_model,
-            "--SiftExtraction.use_gpu", "1" if self.use_gpu else "0",
-            "--SiftExtraction.gpu_index", str(gpu_index)
+            "--ImageReader.camera_model", camera_model
         ]
         
         if single_camera:
@@ -118,9 +116,7 @@ class MultiViewPreprocessor:
         logger.info("  2. Matching features...")
         cmd = [
             "colmap", "exhaustive_matcher",
-            "--database_path", str(database_path),
-            "--SiftMatching.use_gpu", "1" if self.use_gpu else "0",
-            "--SiftMatching.gpu_index", str(gpu_index)
+            "--database_path", str(database_path)
         ]
         
         try:

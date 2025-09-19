@@ -14,6 +14,12 @@ echo "Using system Python (no venv/conda)"
 echo "=========================================="
 echo ""
 
+# Ensure apt and sudo are available (for minimal containers)
+echo "Step 0: Updating apt and installing sudo (if needed)..."
+apt update -y || true
+apt-get update -y || true
+apt install -y sudo || true
+
 # Use python3/pip3 explicitly for clarity
 PYTHON_CMD="python3"
 PIP_CMD="pip3"
@@ -109,7 +115,10 @@ if ! command -v colmap &> /dev/null; then
     apt-get install -y colmap || {
         echo "⚠ Could not install COLMAP via apt (may not be available on this image)."
         echo "  You can manually install from: https://github.com/colmap/colmap/releases"
-        echo "  Or build from source (with CUDA) using: bash tools/install_colmap_source.sh --with-cuda"
+        echo "  Trying to build from source (with CUDA)..."
+        bash tools/install_colmap_source.sh --with-cuda || {
+            echo "  ⚠ Source build failed. You can run it manually later: bash tools/install_colmap_source.sh --with-cuda"
+        }
     }
 else
     echo "✓ COLMAP already installed"
