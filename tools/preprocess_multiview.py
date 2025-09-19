@@ -103,7 +103,17 @@ class MultiViewPreprocessor:
             cmd.extend(["--ImageReader.single_camera", "1"])
         
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True, env=colmap_env)
+            # Stream COLMAP output for visibility
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if line:
+                    logger.info(line)
+            ret = proc.wait()
+            if ret != 0:
+                logger.error(f"Feature extraction failed with code {ret}")
+                return False
         except subprocess.CalledProcessError as e:
             logger.error(f"Feature extraction failed: {e.stderr}")
             return False
@@ -113,14 +123,33 @@ class MultiViewPreprocessor:
             return False
         
         # Step 2: Feature matching
-        logger.info("  2. Matching features...")
-        cmd = [
-            "colmap", "exhaustive_matcher",
-            "--database_path", str(database_path)
-        ]
+        # Choose matcher to avoid O(N^2) for large N
+        num_images = len([f for f in os.listdir(image_dir) if f.lower().endswith((".jpg",".jpeg",".png"))])
+        if num_images > 800:
+            logger.info(f"  2. Matching features (sequential matcher, images={num_images})...")
+            cmd = [
+                "colmap", "sequential_matcher",
+                "--database_path", str(database_path),
+                "--SequentialMatching.overlap", "5"
+            ]
+        else:
+            logger.info(f"  2. Matching features (exhaustive matcher, images={num_images})...")
+            cmd = [
+                "colmap", "exhaustive_matcher",
+                "--database_path", str(database_path)
+            ]
         
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True, env=colmap_env)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if line:
+                    logger.info(line)
+            ret = proc.wait()
+            if ret != 0:
+                logger.error(f"Feature matching failed with code {ret}")
+                return False
         except subprocess.CalledProcessError as e:
             logger.error(f"Feature matching failed: {e.stderr}")
             return False
@@ -138,7 +167,16 @@ class MultiViewPreprocessor:
         ]
         
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True, env=colmap_env)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if line:
+                    logger.info(line)
+            ret = proc.wait()
+            if ret != 0:
+                logger.error(f"Sparse reconstruction failed with code {ret}")
+                return False
         except subprocess.CalledProcessError as e:
             logger.error(f"Sparse reconstruction failed: {e.stderr}")
             return False
@@ -164,7 +202,16 @@ class MultiViewPreprocessor:
         ]
         
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True, env=colmap_env)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if line:
+                    logger.info(line)
+            ret = proc.wait()
+            if ret != 0:
+                logger.error(f"Model conversion failed with code {ret}")
+                return False
             logger.info("✅ COLMAP SfM completed successfully!")
             return True
         except subprocess.CalledProcessError as e:
@@ -398,9 +445,23 @@ class MultiViewPreprocessor:
         
         # Run COLMAP if we have multiple views and not skipping
         if len(video_files) > 1 and not self.skip_colmap:
+            # Sample images for COLMAP to speed up matching
+            logger.info("\nPreparing images for COLMAP (sampling every 10th frame)...")
+            colmap_images_dir = self.colmap_dir / "images"
+            colmap_images_dir.mkdir(parents=True, exist_ok=True)
+            sample_frames = frame_metadata[::10]
+            copied = 0
+            for frame_info in tqdm(sample_frames, desc="Preparing COLMAP images"):
+                src = self.output_dir / frame_info['file_path']
+                dst = colmap_images_dir / f"{frame_info['camera']}_{Path(src).name}"
+                if src.exists():
+                    shutil.copy2(src, dst)
+                    copied += 1
+            logger.info(f"  Copied {copied} images for COLMAP")
+
             logger.info("\nRunning COLMAP for multi-view calibration...")
             colmap_success = self.run_colmap_sfm(
-                image_dir=str(self.frames_dir),
+                image_dir=str(colmap_images_dir),
                 single_camera=False,
                 gpu_index=0 if self.use_gpu else -1
             )
