@@ -5,6 +5,7 @@ import torch
 import imageio.v2 as imageio
 import numpy as np
 from typing import List, Dict, Optional, Tuple
+import cv2
 
 
 def load_transforms(path: str) -> Dict:
@@ -135,9 +136,20 @@ def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = 
             print(f"\n❌ ERROR: Frame file not found: {fp}")
             raise FileNotFoundError(f"Frame file not found: {fp}")
         
-        im = imageio.imread(fp).astype(np.float32) / 255.0
-        if im.shape[:2] != (H, W):
-            raise ValueError(f"Image {fp} has shape {im.shape}, expected {(H,W)}")
+        im = imageio.imread(fp)
+        # Ensure channel dimension is 3 (RGB)
+        if im.ndim == 2:
+            im = np.repeat(im[..., None], 3, axis=2)
+        if im.shape[-1] == 4:
+            im = im[..., :3]
+
+        oh, ow = im.shape[:2]
+        if (oh, ow) != (H, W):
+            # Resize to expected resolution from transforms.json
+            # Choose interpolation based on scaling direction
+            interp = cv2.INTER_AREA if (H < oh or W < ow) else cv2.INTER_LINEAR
+            im = cv2.resize(im, (W, H), interpolation=interp)
+        im = im.astype(np.float32) / 255.0
         images.append(torch.from_numpy(im).permute(2, 0, 1))
         
         # Update progress bar with memory usage
