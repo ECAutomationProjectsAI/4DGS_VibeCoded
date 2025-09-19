@@ -90,6 +90,16 @@ class MultiViewPreprocessor:
         # Force offscreen platform to avoid X11/xcb requirement
         colmap_env['QT_QPA_PLATFORM'] = 'offscreen'
 
+        # Helper: check if a COLMAP subcommand supports an option
+        def _colmap_has_option(subcmd: str, option: str) -> bool:
+            try:
+                help_proc = subprocess.run([
+                    "colmap", subcmd, "-h"
+                ], check=False, capture_output=True, text=True, env=colmap_env)
+                return option in (help_proc.stdout or "")
+            except Exception:
+                return False
+
         # Step 1: Feature extraction
         logger.info("  1. Extracting features...")
         cmd = [
@@ -98,6 +108,9 @@ class MultiViewPreprocessor:
             "--image_path", str(image_dir),
             "--ImageReader.camera_model", camera_model
         ]
+        # Force CPU SIFT in headless environments if supported to avoid OpenGL context errors
+        if _colmap_has_option("feature_extractor", "--SiftExtraction.use_gpu"):
+            cmd.extend(["--SiftExtraction.use_gpu", "0"])  # disable GPU SIFT
         
         if single_camera:
             cmd.extend(["--ImageReader.single_camera", "1"])
@@ -138,6 +151,9 @@ class MultiViewPreprocessor:
                 "colmap", "exhaustive_matcher",
                 "--database_path", str(database_path)
             ]
+        # Force CPU matching if supported to avoid GPU dependencies
+        if _colmap_has_option(cmd[1], "--SiftMatching.use_gpu"):
+            cmd.extend(["--SiftMatching.use_gpu", "0"])  # disable GPU matching
         
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
