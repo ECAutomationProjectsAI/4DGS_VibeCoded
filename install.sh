@@ -115,6 +115,21 @@ $PIP_CMD install h5py>=3.0.0 --no-cache-dir
 echo "  - Visualization"
 $PIP_CMD install matplotlib>=3.3.0 --no-cache-dir
 
+# Try to install COLMAP via apt if not already available
+echo ""
+echo "Step 6.5: Ensuring COLMAP is installed (for multi-view calibration)..."
+if ! command -v colmap &> /dev/null; then
+    echo "COLMAP not found in PATH. Attempting installation via apt..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y && \
+    apt-get install -y colmap || {
+        echo "⚠ Could not install COLMAP via apt (may not be available on this image)."
+        echo "  You can manually install from: https://github.com/colmap/colmap/releases"
+    }
+else
+    echo "✓ COLMAP already installed"
+fi
+
 # Install gsplat for CUDA acceleration (optional but recommended)
 echo ""
 echo "Step 7: Installing gsplat for CUDA acceleration..."
@@ -163,6 +178,9 @@ $PYTHON_CMD -c "import numpy; assert numpy.__version__.startswith('1.24'), f'Wro
 
 # OpenCV (critical for video processing)
 $PYTHON_CMD -c "import cv2; print(f'✓ OpenCV: {cv2.__version__}')" 2>/dev/null || { echo "✗ OpenCV (cv2): FAILED - Video processing will not work!"; FAILED=1; }
+
+# Verify COLMAP presence (optional)
+command -v colmap &> /dev/null && echo "✓ COLMAP: $(colmap -h | head -n 1 2>/dev/null || echo 'found')" || echo "⚠ COLMAP: Not found (multi-view calibration will be skipped unless --skip_colmap is used)"
 
 # Image/Video processing
 $PYTHON_CMD -c "import imageio; print('✓ imageio: OK')" 2>/dev/null || { echo "✗ imageio: FAILED"; FAILED=1; }

@@ -118,6 +118,11 @@ python3 fix_numpy_ubuntu.py
 python3 -c "import cv2, imageio, numpy; print(f'NumPy {numpy.__version__} - Dependencies OK')"
 ```
 
+#### COLMAP (multi-view calibration)
+
+- The installer attempts apt-get install colmap. If it fails on your base image, install COLMAP manually from the official releases (https://github.com/colmap/colmap/releases).
+- If you cannot install COLMAP, add `--skip_colmap` when running preprocessing to generate simple identity-pose transforms.
+
 #### Manual Install
 ```bash
 # 1. Clone repository
@@ -245,6 +250,8 @@ python3 tools/preprocess_multiview.py \
     --output /workspace/processed_data \
     --fps 30 \
     --use_gpu  # GPU acceleration for COLMAP
+    # If COLMAP is unavailable, add:
+    # --skip_colmap
 ```
 
 #### Alternative: Process Individual Videos

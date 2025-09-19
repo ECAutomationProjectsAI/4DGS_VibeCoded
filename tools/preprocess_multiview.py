@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 class MultiViewPreprocessor:
     """Complete preprocessing pipeline for 4DGS."""
     
-    def __init__(self, output_dir: str, use_gpu: bool = False):
+    def __init__(self, output_dir: str, use_gpu: bool = False, skip_colmap: bool = False):
         """
         Initialize preprocessor.
         
@@ -49,6 +49,7 @@ class MultiViewPreprocessor:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.use_gpu = use_gpu
+        self.skip_colmap = skip_colmap
         
         # Subdirectories
         self.frames_dir = self.output_dir / "frames"
@@ -391,8 +392,8 @@ class MultiViewPreprocessor:
         # Initialize COLMAP status
         colmap_success = False
         
-        # Run COLMAP if we have multiple views
-        if len(video_files) > 1:
+        # Run COLMAP if we have multiple views and not skipping
+        if len(video_files) > 1 and not self.skip_colmap:
             logger.info("\nRunning COLMAP for multi-view calibration...")
             colmap_success = self.run_colmap_sfm(
                 image_dir=str(self.frames_dir),
@@ -413,6 +414,9 @@ class MultiViewPreprocessor:
                 logger.info(f"✅ Saved transforms.json to {transforms_path}")
             else:
                 logger.warning("COLMAP failed. You may need to provide manual calibration.")
+        elif len(video_files) > 1 and self.skip_colmap:
+            logger.info("Skipping COLMAP as requested (--skip_colmap). Will generate simple transforms.")
+            colmap_success = False
         else:
             logger.info("Single video detected. Skipping COLMAP (not needed for single view)")
             colmap_success = False
@@ -523,7 +527,7 @@ class MultiViewPreprocessor:
         
         # Step 2: Run COLMAP if no calibration provided
         colmap_data = None
-        if calibration_file is None:
+        if calibration_file is None and not self.skip_colmap:
             logger.info("\n🎥 Step 2: Running camera calibration with COLMAP...")
             
             # Prepare images for COLMAP (combine all camera frames)
@@ -546,6 +550,8 @@ class MultiViewPreprocessor:
                 logger.info("✅ Camera calibration completed")
             else:
                 logger.warning("⚠️  COLMAP failed, using default calibration")
+        elif calibration_file is None and self.skip_colmap:
+            logger.info("\n🎥 Step 2: Skipping COLMAP as requested (--skip_colmap)")
         else:
             logger.info(f"\n📂 Step 2: Loading calibration from {calibration_file}")
             with open(calibration_file, 'r') as f:
@@ -710,13 +716,16 @@ def main():
                        help='Maximum frames to extract (-1 for all)')
     parser.add_argument('--use_gpu', action='store_true',
                        help='Use GPU acceleration for COLMAP')
+    parser.add_argument('--skip_colmap', action='store_true',
+                       help='Skip COLMAP and generate simple transforms (identity poses, estimated intrinsics)')
     
     args = parser.parse_args()
     
     # Initialize preprocessor
     preprocessor = MultiViewPreprocessor(
         output_dir=args.output,
-        use_gpu=args.use_gpu
+        use_gpu=args.use_gpu,
+        skip_colmap=args.skip_colmap
     )
     
     # Handle folder input
