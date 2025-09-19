@@ -88,32 +88,16 @@ $PYTHON_CMD -c "import numpy; assert numpy.__version__.startswith('1.24'), f'Num
     $PYTHON_CMD fix_numpy.py || echo "  Fix script failed. Manual intervention required."
 }
 
-# Install all core dependencies
+# Install all core dependencies via requirements (respects pinned NumPy)
 echo ""
-echo "Step 6: Installing all core dependencies..."
-echo "  - OpenCV (cv2)"
-$PIP_CMD install opencv-python>=4.5.0 --no-cache-dir
+echo "Step 6: Installing all core dependencies (requirements_runpod.txt)..."
+$PIP_CMD install --no-cache-dir -r requirements_runpod.txt || true
 
-echo "  - Image/Video processing"
-$PIP_CMD install imageio>=2.9.0 --no-cache-dir
-$PIP_CMD install imageio-ffmpeg>=0.4.5 --no-cache-dir
-$PIP_CMD install Pillow>=9.0.0 --no-cache-dir
+# Re-pin NumPy in case resolver upgraded it
+$PIP_CMD install numpy==1.24.3 --force-reinstall --no-deps --no-cache-dir || true
 
-echo "  - Scientific computing"
-$PIP_CMD install scipy>=1.7.0 --no-cache-dir
-$PIP_CMD install scikit-learn>=0.24.0 --no-cache-dir
-
-echo "  - Utilities"
-$PIP_CMD install tqdm>=4.62.0 --no-cache-dir
-$PIP_CMD install PyYAML>=5.4.0 --no-cache-dir
-$PIP_CMD install psutil>=5.8.0 --no-cache-dir
-
-echo "  - Data handling"
-$PIP_CMD install pandas>=1.3.0 --no-cache-dir
-$PIP_CMD install h5py>=3.0.0 --no-cache-dir
-
-echo "  - Visualization"
-$PIP_CMD install matplotlib>=3.3.0 --no-cache-dir
+# Cleanup stray files that may have been created by shell redirection in older scripts
+rm -f =* 2>/dev/null || true
 
 # Try to install COLMAP via apt if not already available
 echo ""
