@@ -3,7 +3,7 @@
 Complete preprocessing pipeline for 4D Gaussian Splatting.
 
 This script handles the full data preparation workflow:
-1. Extract frames from multi-view videos
+1. Extract frames from multi-view videos (from folder or individual files)
 2. Camera calibration (intrinsics/extrinsics) via COLMAP or provided calibration
 3. Time synchronization across cameras
 4. Generate transforms.json for training
@@ -18,11 +18,12 @@ import json
 import argparse
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import subprocess
 import shutil
 from tqdm import tqdm
 import logging
+import glob
 
 # Add parent directory to import gs4d modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -303,6 +304,159 @@ class MultiViewPreprocessor:
         
         return transforms
     
+    def process_video_folder(self, 
+                           video_folder: Union[str, Path],
+                           output_dir: Union[str, Path],
+                           video_extensions: List[str] = ['.mp4', '.avi', '.mov', '.mkv'],
+                           fps: int = 30,
+                           skip_frames: int = 1,
+                           resize: Optional[Tuple[int, int]] = None,
+                           start_time: float = 0.0,
+                           end_time: Optional[float] = None) -> Dict:
+        """
+        Process all videos in a folder.
+        
+        Args:
+            video_folder: Path to folder containing video files
+            output_dir: Output directory for processed data
+            video_extensions: List of video file extensions to process
+            fps: Frame rate for extraction
+            skip_frames: Extract every N frames
+            resize: Optional (width, height) to resize frames
+            start_time: Start time in seconds
+            end_time: End time in seconds (None for full video)
+            
+        Returns:
+            Processing results dictionary
+        """
+        video_folder = Path(video_folder)
+        output_dir = Path(output_dir)
+        
+        if not video_folder.exists():
+            raise ValueError(f"Video folder does not exist: {video_folder}")
+        
+        # Find all video files
+        video_files = []
+        for ext in video_extensions:
+            video_files.extend(video_folder.glob(f"*{ext}"))
+            video_files.extend(video_folder.glob(f"*{ext.upper()}"))
+        
+        video_files = sorted(list(set(video_files)))  # Remove duplicates and sort
+        
+        if not video_files:
+            raise ValueError(f"No video files found in {video_folder} with extensions {video_extensions}")
+        
+        logger.info(f"Found {len(video_files)} video files in {video_folder}")
+        
+        # Use filenames (without extension) as camera names
+        camera_names = [vf.stem for vf in video_files]
+        
+        logger.info("Videos to process:")
+        for vf, cn in zip(video_files, camera_names):
+            logger.info(f"  {vf.name} -> camera name: {cn}")
+        
+        # Process each video
+        frame_metadata = []
+        for video_file, camera_name in zip(video_files, camera_names):
+            logger.info(f"\nProcessing {video_file.name} as camera '{camera_name}'...")
+            
+            # Create camera-specific output directory
+            cam_frames_dir = self.frames_dir / camera_name
+            cam_frames_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Initialize video processor for this video
+            from gs4d.video_processor import VideoProcessor
+            processor = VideoProcessor(str(video_file), camera_name=camera_name)
+            
+            # Extract frames
+            frames_info = processor.extract_frames(
+                output_dir=str(cam_frames_dir),
+                fps=fps,
+                skip_frames=skip_frames,
+                resize=resize,
+                start_time=start_time,
+                end_time=end_time
+            )
+            
+            # Add camera-specific metadata
+            for frame in frames_info:
+                frame['camera'] = camera_name
+                frame['file_path'] = str(Path(camera_name) / Path(frame['file_path']).name)
+                frame_metadata.append(frame)
+        
+        logger.info(f"\nExtracted {len(frame_metadata)} total frames from {len(video_files)} cameras")
+        
+        # Run COLMAP if we have multiple views
+        if len(video_files) > 1:
+            logger.info("\nRunning COLMAP for multi-view calibration...")
+            colmap_success = self.run_colmap_sfm(
+                image_dir=str(self.frames_dir),
+                single_camera=False,
+                gpu_index=0 if self.use_gpu else -1
+            )
+            
+            if colmap_success:
+                # Parse COLMAP output and generate transforms
+                colmap_data = self.parse_colmap_output()
+                transforms = self.generate_transforms_json(colmap_data, frame_metadata)
+                
+                # Save transforms.json
+                transforms_path = self.output_dir / "transforms.json"
+                with open(transforms_path, 'w') as f:
+                    json.dump(transforms, f, indent=2)
+                
+                logger.info(f"✅ Saved transforms.json to {transforms_path}")
+            else:
+                logger.warning("COLMAP failed. You may need to provide manual calibration.")
+        else:
+            logger.info("Single video detected. Skipping COLMAP (not needed for single view)")
+            
+            # Generate simple transforms for single camera
+            transforms = {
+                'frames': frame_metadata,
+                'camera_angle_x': 1.0,  # Default, will need calibration
+                'fl_x': 1000.0,  # Default focal length
+                'fl_y': 1000.0,
+                'cx': 960,  # Assuming 1920 width
+                'cy': 540,  # Assuming 1080 height
+                'w': 1920,
+                'h': 1080,
+                'aabb_scale': 4,
+                'scale': 1.0,
+                'offset': [0.5, 0.5, 0.5]
+            }
+            
+            transforms_path = self.output_dir / "transforms.json"
+            with open(transforms_path, 'w') as f:
+                json.dump(transforms, f, indent=2)
+            
+            logger.info(f"✅ Saved transforms.json to {transforms_path}")
+        
+        # Save processing metadata
+        metadata = {
+            'num_cameras': len(video_files),
+            'camera_names': camera_names,
+            'video_files': [str(vf) for vf in video_files],
+            'total_frames': len(frame_metadata),
+            'fps': fps,
+            'skip_frames': skip_frames,
+            'resize': resize,
+            'colmap_success': colmap_success if len(video_files) > 1 else None
+        }
+        
+        metadata_path = self.output_dir / "metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        logger.info(f"✅ Saved metadata to {metadata_path}")
+        
+        return {
+            'success': True,
+            'num_cameras': len(video_files),
+            'total_frames': len(frame_metadata),
+            'output_dir': str(self.output_dir)
+        }
+    
     def process_videos(self,
                       video_paths: List[str],
                       camera_names: Optional[List[str]] = None,
@@ -521,38 +675,79 @@ def look_at_matrix(eye, center, up):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Preprocess multi-view videos for 4D Gaussian Splatting training'
+        description='Preprocess multi-view videos for 4D Gaussian Splatting training',
+        formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument('--videos', nargs='+', required=True, 
-                       help='Input video files')
-    parser.add_argument('--output', type=str, required=True,
+    
+    # Input options - either folder or individual videos
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument('--video_folder', '-f', type=str,
+                           help='Path to folder containing video files\n(Uses video filenames as camera names)')
+    input_group.add_argument('--videos', '-v', nargs='+', type=str, 
+                           help='Individual video file paths')
+    
+    parser.add_argument('--output', '-o', type=str, required=True,
                        help='Output directory')
     parser.add_argument('--camera_names', nargs='+', default=None,
-                       help='Camera names (default: cam0, cam1, ...)')
+                       help='Camera names for --videos option\n(For --video_folder, filenames are used automatically)')
     parser.add_argument('--calibration', type=str, default=None,
                        help='Pre-computed calibration file')
     parser.add_argument('--fps', type=float, default=30.0,
-                       help='Target frame rate')
+                       help='Target frame rate (default: 30)')
     parser.add_argument('--skip_frames', type=int, default=1,
-                       help='Extract every N frames')
+                       help='Extract every N frames (default: 1)')
     parser.add_argument('--max_frames', type=int, default=-1,
-                       help='Maximum frames to extract')
+                       help='Maximum frames to extract (-1 for all)')
     parser.add_argument('--use_gpu', action='store_true',
-                       help='Use GPU acceleration')
+                       help='Use GPU acceleration for COLMAP')
     
     args = parser.parse_args()
     
-    # Validate inputs
-    for video in args.videos:
-        if not os.path.exists(video):
-            logger.error(f"Video file not found: {video}")
-            sys.exit(1)
-    
-    # Run preprocessing
+    # Initialize preprocessor
     preprocessor = MultiViewPreprocessor(
         output_dir=args.output,
         use_gpu=args.use_gpu
     )
+    
+    # Handle folder input
+    if args.video_folder:
+        logger.info(f"Processing all videos in folder: {args.video_folder}")
+        
+        result = preprocessor.process_video_folder(
+            video_folder=args.video_folder,
+            output_dir=args.output,
+            fps=int(args.fps),
+            skip_frames=args.skip_frames
+        )
+        
+        if result['success']:
+            print("\n" + "="*60)
+            print("✅ PREPROCESSING COMPLETE")
+            print("="*60)
+            print(f"Cameras processed: {result['num_cameras']}")
+            print(f"Total frames: {result['total_frames']}")
+            print(f"Output directory: {result['output_dir']}")
+            print("\nNext step:")
+            print(f"  python tools/train.py --data_root {result['output_dir']} --out_dir model/")
+        else:
+            logger.error("Preprocessing failed")
+            sys.exit(1)
+    
+    # Handle individual video files
+    else:
+        # Validate inputs
+        for video in args.videos:
+            if not os.path.exists(video):
+                logger.error(f"Video file not found: {video}")
+                sys.exit(1)
+        
+        # Use filenames as camera names if not provided
+        if args.camera_names is None:
+            args.camera_names = [Path(v).stem for v in args.videos]
+            logger.info(f"Using video filenames as camera names: {args.camera_names}")
+        elif len(args.camera_names) != len(args.videos):
+            logger.error(f"Number of camera names ({len(args.camera_names)}) must match videos ({len(args.videos)})")
+            sys.exit(1)
     
     result = preprocessor.process_videos(
         video_paths=args.videos,

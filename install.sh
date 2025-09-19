@@ -1,9 +1,10 @@
 #!/bin/bash
 # 4D Gaussian Splatting Installation Script
-# Complete dependency installation for RunPod environments
+# Complete dependency installation for RunPod/Windows environments
 # NO virtual environments - uses system Python directly
 
-set -e  # Exit on error
+# Don't use set -e on Windows Git Bash/MSYS2
+# set -e  # Exit on error
 
 echo "=========================================="
 echo "4D Gaussian Splatting Installation"
@@ -42,6 +43,14 @@ if [[ ! -z "${CONDA_DEFAULT_ENV}" ]]; then
     conda deactivate 2>/dev/null || true
 fi
 
+# Detect if running on Windows
+if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ "$OS" == "Windows_NT" ]]; then
+    echo "Detected Windows environment"
+    IS_WINDOWS=true
+else
+    IS_WINDOWS=false
+fi
+
 # Check PyTorch
 echo ""
 echo "Step 3: Checking PyTorch..."
@@ -64,18 +73,34 @@ echo "  We need to downgrade to NumPy 1.24.3 for compatibility."
 # First check current numpy version
 $PYTHON_CMD -c "import numpy; print(f'  Current NumPy: {numpy.__version__}')" 2>/dev/null || echo "  NumPy not installed"
 
-# Force uninstall any existing numpy
+# Complete NumPy cleanup and reinstall
+echo "  Performing complete NumPy cleanup..."
+# Uninstall all numpy versions
 $PIP_CMD uninstall numpy -y 2>/dev/null || true
+$PIP_CMD uninstall numpy -y 2>/dev/null || true  # Run twice to be sure
+
+# Clear pip cache to avoid conflicts
+if [ "$IS_WINDOWS" = true ]; then
+    # Windows cache location
+    $PIP_CMD cache purge 2>/dev/null || true
+else
+    # Linux cache location
+    rm -rf ~/.cache/pip/* 2>/dev/null || true
+fi
 
 # Install specific numpy version with maximum force
 echo "  Installing NumPy 1.24.3..."
-$PIP_CMD install numpy==1.24.3 --force-reinstall --no-deps --no-cache-dir
+$PIP_CMD install numpy==1.24.3 --force-reinstall --no-deps --no-cache-dir --no-binary :all: 2>/dev/null || 
+$PIP_CMD install numpy==1.24.3 --force-reinstall --no-deps --no-cache-dir || {
+    echo "  Trying alternative NumPy installation method..."
+    $PIP_CMD install 'numpy>=1.24,<1.25' --force-reinstall --no-cache-dir
+}
 
 # Verify it worked
 $PYTHON_CMD -c "import numpy; assert numpy.__version__.startswith('1.24'), f'NumPy {numpy.__version__} installed, need 1.24.x'; print(f'  ✓ NumPy {numpy.__version__} installed successfully')" || {
     echo "  ✗ Failed to install NumPy 1.24.3!"
-    echo "  Trying alternative approach..."
-    $PIP_CMD install 'numpy<2.0' --force-reinstall --no-cache-dir
+    echo "  Running robust Python fix script as fallback..."
+    $PYTHON_CMD fix_numpy_robust.py || $PYTHON_CMD fix_numpy.py || echo "  Fix scripts failed. Manual intervention required."
 }
 
 # Install all core dependencies
@@ -143,6 +168,13 @@ echo "------------------"
 
 # Track failures
 FAILED=0
+
+# Clean up any weird files created during installation (Windows issue)
+if [ "$IS_WINDOWS" = true ]; then
+    # Remove any files with weird names that might have been created
+    find . -maxdepth 1 -type f -name '?*' -delete 2>/dev/null || true
+    find . -maxdepth 1 -type f -name '*\?*' -delete 2>/dev/null || true
+fi
 
 # PyTorch and CUDA
 $PYTHON_CMD -c "import torch; print(f'✓ PyTorch: {torch.__version__}')" 2>/dev/null || { echo "✗ PyTorch: FAILED"; FAILED=1; }
