@@ -1,128 +1,138 @@
 #!/usr/bin/env python3
 """
-Fix NumPy version conflicts with PyTorch 2.8+
-PyTorch 2.8+ includes NumPy 2.x which breaks compatibility with our code.
-This script forces NumPy 1.24.x installation.
+NumPy 1.24.3 installer for RunPod Ubuntu environment.
+Specifically for: runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 """
 
 import sys
 import subprocess
-import importlib
+import os
+import shutil
+import site
 
-def run_command(cmd, check=True):
-    """Run a shell command and return output."""
+def run_command(cmd_list):
+    """Run command and return result."""
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=check)
-        return result.stdout.strip(), result.stderr.strip(), result.returncode
-    except subprocess.CalledProcessError as e:
-        return e.stdout, e.stderr, e.returncode
+        result = subprocess.run(cmd_list, capture_output=True, text=True)
+        return result.stdout, result.stderr, result.returncode
+    except Exception as e:
+        return "", str(e), 1
 
-def check_numpy():
-    """Check current NumPy version."""
-    try:
-        import numpy
-        return numpy.__version__
-    except ImportError:
-        return None
-
-def check_pytorch():
-    """Check PyTorch installation."""
-    try:
-        import torch
-        return torch.__version__
-    except ImportError:
-        return None
+def clean_numpy():
+    """Remove all NumPy installations from Ubuntu system."""
+    print("Cleaning NumPy installations...")
+    
+    # Get site-packages directories
+    site_dirs = site.getsitepackages()
+    if hasattr(site, 'getusersitepackages'):
+        user_site = site.getusersitepackages()
+        if user_site and os.path.exists(user_site):
+            site_dirs.append(user_site)
+    
+    # Clean numpy from all locations
+    for site_dir in site_dirs:
+        if os.path.exists(site_dir):
+            for item in os.listdir(site_dir):
+                if 'numpy' in item.lower():
+                    path = os.path.join(site_dir, item)
+                    try:
+                        if os.path.isdir(path):
+                            shutil.rmtree(path)
+                            print(f"  Removed: {path}")
+                        else:
+                            os.remove(path)
+                            print(f"  Removed: {path}")
+                    except Exception as e:
+                        print(f"  Could not remove {path}: {e}")
 
 def main():
-    print("=" * 50)
-    print("NumPy Version Fix for 4D Gaussian Splatting")
-    print("=" * 50)
+    print("=" * 60)
+    print("NumPy 1.24.3 Installer for RunPod")
+    print("Target: Ubuntu 22.04 with PyTorch 2.8.0")
+    print("=" * 60)
     print()
-    
-    # Check Python version
-    print(f"Python version: {sys.version}")
-    print()
-    
-    # Check PyTorch
-    pytorch_ver = check_pytorch()
-    if not pytorch_ver:
-        print("❌ ERROR: PyTorch not found!")
-        print("Please install PyTorch first:")
-        print("  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118")
-        sys.exit(1)
-    print(f"✓ PyTorch version: {pytorch_ver}")
     
     # Check current NumPy
-    numpy_ver = check_numpy()
-    if numpy_ver:
-        print(f"Current NumPy version: {numpy_ver}")
+    try:
+        import numpy
+        current = numpy.__version__
+        print(f"Current NumPy: {current}")
         
-        if numpy_ver.startswith("1.24"):
-            print("✓ NumPy 1.24.x already installed - no fix needed!")
+        if current.startswith("1.24"):
+            print("✅ NumPy 1.24.x already installed!")
             return 0
-        elif numpy_ver.startswith("2."):
-            print("⚠️  NumPy 2.x detected - need to downgrade")
-        else:
-            print(f"⚠️  NumPy {numpy_ver} detected - need to change to 1.24.x")
-    else:
+    except ImportError:
         print("NumPy not installed")
     
-    print()
-    print("Fixing NumPy version...")
-    print("  PyTorch 2.8+ comes with NumPy 2.x")
-    print("  We need NumPy 1.24.x for compatibility")
-    print()
+    print("\nStarting installation process...")
     
-    # Get pip command
-    pip_cmd = sys.executable + " -m pip"
+    # Step 1: Uninstall via pip
+    print("\n1. Uninstalling NumPy via pip...")
+    pip = [sys.executable, "-m", "pip"]
     
-    # Method 1: Uninstall and reinstall
-    print("Step 1: Uninstalling current NumPy...")
-    stdout, stderr, code = run_command(f"{pip_cmd} uninstall numpy -y", check=False)
+    for _ in range(2):
+        stdout, stderr, code = run_command(pip + ["uninstall", "numpy", "-y"])
+        if "not installed" in (stdout + stderr).lower():
+            break
     
-    print("Step 2: Installing NumPy 1.24.3...")
+    # Step 2: Clean filesystem
+    print("\n2. Cleaning filesystem...")
+    clean_numpy()
+    
+    # Step 3: Clear pip cache
+    print("\n3. Clearing pip cache...")
+    cache_dir = os.path.expanduser("~/.cache/pip")
+    if os.path.exists(cache_dir):
+        try:
+            shutil.rmtree(cache_dir)
+            print(f"  Cleared: {cache_dir}")
+        except Exception as e:
+            print(f"  Could not clear cache: {e}")
+    
+    run_command(pip + ["cache", "purge"])
+    
+    # Step 4: Install NumPy 1.24.3
+    print("\n4. Installing NumPy 1.24.3...")
+    
+    # Try installation
     stdout, stderr, code = run_command(
-        f"{pip_cmd} install numpy==1.24.3 --force-reinstall --no-deps --no-cache-dir"
+        pip + ["install", "numpy==1.24.3", "--force-reinstall", "--no-cache-dir"]
     )
     
     if code != 0:
-        print("  First attempt failed, trying alternative...")
+        print("  First attempt failed, trying without force-reinstall...")
         stdout, stderr, code = run_command(
-            f"{pip_cmd} install 'numpy<1.25,>=1.24' --force-reinstall --no-cache-dir"
+            pip + ["install", "numpy==1.24.3", "--no-cache-dir"]
         )
     
-    # Reload numpy module
+    if code != 0:
+        print("❌ Installation failed!")
+        print(f"Error: {stderr}")
+        return 1
+    
+    # Step 5: Verify
+    print("\n5. Verifying installation...")
+    
+    # Clear module cache
     if 'numpy' in sys.modules:
         del sys.modules['numpy']
     
-    # Verify installation
     try:
         import numpy
-        new_ver = numpy.__version__
-        print()
-        print(f"Installed NumPy version: {new_ver}")
+        version = numpy.__version__
+        print(f"  Installed NumPy: {version}")
         
-        if new_ver.startswith("1.24"):
-            print("✅ Success! NumPy 1.24.x installed successfully!")
-            print()
-            print("Next steps:")
-            print("  1. Run full installation: python install.sh (or bash install.sh)")
-            print("  2. Or continue with training: python tools/train.py --data_root dataset/ --out_dir model/")
+        if version.startswith("1.24"):
+            print("\n✅ SUCCESS! NumPy 1.24.3 installed!")
+            print("\nYou can now proceed with training:")
+            print("  python tools/train.py --data_root dataset/ --out_dir model/")
             return 0
         else:
-            print(f"⚠️  Warning: NumPy {new_ver} installed, but we need 1.24.x")
-            print()
-            print("Manual fix:")
-            print(f"  {pip_cmd} uninstall numpy -y")
-            print(f"  {pip_cmd} install numpy==1.24.3 --no-deps")
+            print(f"\n⚠️ Wrong version installed: {version}")
             return 1
-            
     except ImportError as e:
-        print(f"❌ ERROR: Failed to import NumPy after installation: {e}")
+        print(f"\n❌ Cannot import NumPy: {e}")
         return 1
-    
-    print()
-    print("=" * 50)
 
 if __name__ == "__main__":
     sys.exit(main())

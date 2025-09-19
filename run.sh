@@ -1,11 +1,34 @@
 #!/bin/bash
-# Helper script to run tools with correct PYTHONPATH
+# Run script for RunPod environment
+# Target: runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
-# Get the directory where this script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+set -e
 
-# Export PYTHONPATH to include the project root
-export PYTHONPATH="$SCRIPT_DIR:$PYTHONPATH"
+# Set Python path
+export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
-# Run the command passed as arguments
-python3 "$@"
+# Ensure we're using Python 3.11
+PYTHON_CMD="python3"
+
+echo "=========================================="
+echo "4DGS RunPod Execution Script"
+echo "Environment: Ubuntu 22.04"
+echo "Python: $($PYTHON_CMD --version)"
+echo "=========================================="
+echo ""
+
+# Check if first argument is provided
+if [ $# -eq 0 ]; then
+    echo "Usage: bash run_runpod.sh <script> [arguments]"
+    echo ""
+    echo "Examples:"
+    echo "  bash run_runpod.sh tools/preprocess_multiview.py --video_folder /videos --output /data"
+    echo "  bash run_runpod.sh tools/train.py --data_root /data --out_dir /model"
+    echo "  bash run_runpod.sh tools/render.py --ckpt /model/final.pt --out_dir /renders"
+    exit 1
+fi
+
+# Run the command
+echo "Running: $PYTHON_CMD $@"
+echo ""
+$PYTHON_CMD "$@"

@@ -91,31 +91,31 @@ Our implementation combines advanced methods from several leading 4DGS papers:
 
 ## Installation
 
-### Environment Requirements
-- **RunPod/Cloud GPU**: PyTorch 2.8.0+ with CUDA 12.8+
-- **Python**: 3.10-3.11
-- **GPU**: NVIDIA with CUDA compute capability 6.0+
+### Target Environment
+This project is specifically optimized for RunPod:
+- **Container**: `runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`
+- **OS**: Ubuntu 22.04 LTS
+- **Python**: 3.11
+- **PyTorch**: 2.8.0
+- **CUDA**: 12.8.1
+- **GPU Support**: A100, A6000, RTX 4090, RTX 3090
 
-### Tested Environment
-This project is optimized for:
-`runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`
+### Installation Steps for RunPod
 
-### Installation Steps
-
-#### Quick Install (Recommended)
+#### Quick Install
 ```bash
 # 1. Clone repository
 git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
 cd 4DGS_VibeCoded
 
-# 2. Run installation script (REQUIRED - installs all dependencies)
+# 2. Run installation script
 bash install.sh
 
-# 3. If you get NumPy errors (common with PyTorch 2.8+), run:
-python fix_numpy.py  # or bash fix_numpy.sh
+# 3. If NumPy issues persist, run the Ubuntu-specific fix:
+python3 fix_numpy_ubuntu.py
 
-# 4. Verify installation worked
-python -c "import cv2, imageio, numpy; print('Dependencies OK')"
+# 4. Verify installation
+python3 -c "import cv2, imageio, numpy; print(f'NumPy {numpy.__version__} - Dependencies OK')"
 ```
 
 #### Manual Install
@@ -124,24 +124,28 @@ python -c "import cv2, imageio, numpy; print('Dependencies OK')"
 git clone https://github.com/ECAutomationProjectsAI/4DGS_VibeCoded.git
 cd 4DGS_VibeCoded
 
-# 2. Install dependencies
-pip install -r requirements_runpod.txt --force-reinstall
+# 2. Clean and install NumPy 1.24.3
+pip3 uninstall numpy -y
+pip3 install numpy==1.24.3 --no-cache-dir
 
-# 3. Install CUDA acceleration (optional but recommended)
-pip install gsplat==0.1.11
+# 3. Install other dependencies
+pip3 install -r requirements_runpod.txt
 
-# 4. Verify installation
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+# 4. Install CUDA acceleration
+pip3 install gsplat==0.1.11
+
+# 5. Verify installation
+python3 -c "import torch; print(f'CUDA: {torch.cuda.is_available()}, NumPy: {numpy.__version__}')"
 ```
 
-### Docker Alternative
+### Docker for RunPod
 
 ```bash
-# Build image
-docker build -t gs4d:latest .
+# Build image based on RunPod base
+docker build -t gs4d:runpod .
 
-# Run with GPU
-docker run --gpus all -it gs4d:latest
+# Run with GPU support
+docker run --gpus all -v /workspace:/workspace -it gs4d:runpod
 ```
 
 
@@ -235,21 +239,21 @@ For best results, use synchronized multi-view capture similar to reference datas
 - **Technicolor**: 4×4 array @ 2048×1088
 
 ```bash
-# Process multi-view videos with COLMAP calibration
-python tools/preprocess_multiview.py \
-    --videos cam0.mp4 cam1.mp4 cam2.mp4 cam3.mp4 \
-    --output processed_data \
-    --camera_names cam0 cam1 cam2 cam3 \
+# Process all videos in a folder (RunPod optimized)
+python3 tools/preprocess_multiview.py \
+    --video_folder /workspace/videos \
+    --output /workspace/processed_data \
     --fps 30 \
-    --use_gpu  # Enable GPU-accelerated COLMAP
+    --use_gpu  # GPU acceleration for COLMAP
 ```
 
-#### Single Camera Processing (Limited Quality)
+#### Alternative: Process Individual Videos
 ```bash
-# Single camera with turntable or orbiting setup
-python tools/preprocess_video.py turntable_video.mp4 -o dataset/ \
-    --resize 1280 720 \
-    --extract-every 2
+# Specify individual video files with custom camera names
+python3 tools/preprocess_multiview.py \
+    --videos /workspace/vid1.mp4 /workspace/vid2.mp4 \
+    --camera_names cam0 cam1 \
+    --output /workspace/processed_data
 
 #### Example B: Multi-Camera Setup (Recommended)
 ```bash

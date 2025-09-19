@@ -1,17 +1,16 @@
 #!/bin/bash
 # 4D Gaussian Splatting Installation Script
-# Complete dependency installation for RunPod/Windows environments
+# Optimized for: runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 # NO virtual environments - uses system Python directly
 
-# Don't use set -e on Windows Git Bash/MSYS2
-# set -e  # Exit on error
+set -e  # Exit on error
 
 echo "=========================================="
 echo "4D Gaussian Splatting Installation"
 echo "=========================================="
-echo "Environment: RunPod/Cloud GPU"
-echo "Using system Python (no venv/conda)"
+echo "Environment: RunPod Ubuntu 22.04"
 echo "Target: runpod/pytorch:2.8.0-py3.11-cuda12.8.1"
+echo "Using system Python (no venv/conda)"
 echo "=========================================="
 echo ""
 
@@ -37,18 +36,10 @@ else
     HAS_CUDA=false
 fi
 
-# Check if running in conda (and deactivate if so)
-if [[ ! -z "${CONDA_DEFAULT_ENV}" ]]; then
-    echo "Warning: Conda environment detected. Deactivating..."
-    conda deactivate 2>/dev/null || true
-fi
-
-# Detect if running on Windows
-if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ "$OS" == "Windows_NT" ]]; then
-    echo "Detected Windows environment"
-    IS_WINDOWS=true
-else
-    IS_WINDOWS=false
+# RunPod environment check
+if [[ ! -f /etc/os-release ]] || ! grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
+    echo "Warning: This script is optimized for Ubuntu 22.04 (RunPod environment)"
+    echo "Current system: $(cat /etc/os-release | grep PRETTY_NAME | cut -d'=' -f2 2>/dev/null || echo 'Unknown')"
 fi
 
 # Check PyTorch
@@ -73,24 +64,18 @@ echo "  We need to downgrade to NumPy 1.24.3 for compatibility."
 # First check current numpy version
 $PYTHON_CMD -c "import numpy; print(f'  Current NumPy: {numpy.__version__}')" 2>/dev/null || echo "  NumPy not installed"
 
-# Complete NumPy cleanup and reinstall
+# Complete NumPy cleanup and reinstall for Ubuntu
 echo "  Performing complete NumPy cleanup..."
 # Uninstall all numpy versions
 $PIP_CMD uninstall numpy -y 2>/dev/null || true
 $PIP_CMD uninstall numpy -y 2>/dev/null || true  # Run twice to be sure
 
-# Clear pip cache to avoid conflicts
-if [ "$IS_WINDOWS" = true ]; then
-    # Windows cache location
-    $PIP_CMD cache purge 2>/dev/null || true
-else
-    # Linux cache location
-    rm -rf ~/.cache/pip/* 2>/dev/null || true
-fi
+# Clear pip cache (Ubuntu location)
+rm -rf ~/.cache/pip/* 2>/dev/null || true
+$PIP_CMD cache purge 2>/dev/null || true
 
-# Install specific numpy version with maximum force
+# Install specific numpy version for RunPod/Ubuntu
 echo "  Installing NumPy 1.24.3..."
-$PIP_CMD install numpy==1.24.3 --force-reinstall --no-deps --no-cache-dir --no-binary :all: 2>/dev/null || 
 $PIP_CMD install numpy==1.24.3 --force-reinstall --no-deps --no-cache-dir || {
     echo "  Trying alternative NumPy installation method..."
     $PIP_CMD install 'numpy>=1.24,<1.25' --force-reinstall --no-cache-dir
@@ -99,8 +84,8 @@ $PIP_CMD install numpy==1.24.3 --force-reinstall --no-deps --no-cache-dir || {
 # Verify it worked
 $PYTHON_CMD -c "import numpy; assert numpy.__version__.startswith('1.24'), f'NumPy {numpy.__version__} installed, need 1.24.x'; print(f'  ✓ NumPy {numpy.__version__} installed successfully')" || {
     echo "  ✗ Failed to install NumPy 1.24.3!"
-    echo "  Running robust Python fix script as fallback..."
-    $PYTHON_CMD fix_numpy_robust.py || $PYTHON_CMD fix_numpy.py || echo "  Fix scripts failed. Manual intervention required."
+    echo "  Running fix script as fallback..."
+    $PYTHON_CMD fix_numpy.py || echo "  Fix script failed. Manual intervention required."
 }
 
 # Install all core dependencies
@@ -168,13 +153,6 @@ echo "------------------"
 
 # Track failures
 FAILED=0
-
-# Clean up any weird files created during installation (Windows issue)
-if [ "$IS_WINDOWS" = true ]; then
-    # Remove any files with weird names that might have been created
-    find . -maxdepth 1 -type f -name '?*' -delete 2>/dev/null || true
-    find . -maxdepth 1 -type f -name '*\?*' -delete 2>/dev/null || true
-fi
 
 # PyTorch and CUDA
 $PYTHON_CMD -c "import torch; print(f'✓ PyTorch: {torch.__version__}')" 2>/dev/null || { echo "✗ PyTorch: FAILED"; FAILED=1; }
