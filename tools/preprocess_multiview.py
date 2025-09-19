@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 class MultiViewPreprocessor:
     """Complete preprocessing pipeline for 4DGS."""
     
-    def __init__(self, output_dir: str, use_gpu: bool = False, skip_colmap: bool = False):
+    def __init__(self, output_dir: str, use_gpu: bool = False, skip_colmap: bool = False, colmap_threads: int = 0, colmap_max_image_size: int = 0):
         """
         Initialize preprocessor.
         
@@ -50,6 +50,8 @@ class MultiViewPreprocessor:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.use_gpu = use_gpu
         self.skip_colmap = skip_colmap
+        self.colmap_threads = int(colmap_threads) if colmap_threads is not None else 0
+        self.colmap_max_image_size = int(colmap_max_image_size) if colmap_max_image_size is not None else 0
         
         # Subdirectories
         self.frames_dir = self.output_dir / "frames"
@@ -111,6 +113,12 @@ class MultiViewPreprocessor:
         # Force CPU SIFT in headless environments if supported to avoid OpenGL context errors
         if _colmap_has_option("feature_extractor", "--SiftExtraction.use_gpu"):
             cmd.extend(["--SiftExtraction.use_gpu", "0"])  # disable GPU SIFT
+        # Limit SIFT threads to control RAM use, if requested
+        if self.colmap_threads > 0 and _colmap_has_option("feature_extractor", "--SiftExtraction.num_threads"):
+            cmd.extend(["--SiftExtraction.num_threads", str(self.colmap_threads)])
+        # Limit max image size to reduce memory, if requested
+        if self.colmap_max_image_size > 0 and _colmap_has_option("feature_extractor", "--SiftExtraction.max_image_size"):
+            cmd.extend(["--SiftExtraction.max_image_size", str(self.colmap_max_image_size)])
         
         if single_camera:
             cmd.extend(["--ImageReader.single_camera", "1"])
@@ -556,7 +564,9 @@ class MultiViewPreprocessor:
                       calibration_file: Optional[str] = None,
                       target_fps: float = 30.0,
                       extract_every_n: int = 1,
-                      max_frames: int = -1) -> Dict:
+                      max_frames: int = -1,
+                      start_time: float = 0.0,
+                      end_time: Optional[float] = None) -> Dict:
         """
         Main processing pipeline for multi-view videos.
         
@@ -597,7 +607,7 @@ class MultiViewPreprocessor:
             use_gpu=self.use_gpu
         )
         
-        metadata = processor.process_multi_camera_videos(cameras)
+        metadata = processor.process_multi_camera_videos(cameras, sync_method="timestamp", start_time=start_time, end_time=end_time)
         
         # Check if we have frames
         if not metadata['frames']:
@@ -799,6 +809,14 @@ def main():
                        help='Use GPU acceleration for COLMAP')
     parser.add_argument('--skip_colmap', action='store_true',
                        help='Skip COLMAP and generate simple transforms (identity poses, estimated intrinsics)')
+    parser.add_argument('--start', type=float, default=0.0,
+                       help='Start time in seconds to begin extraction (default: 0.0)')
+    parser.add_argument('--end', type=float, default=None,
+                       help='End time in seconds to stop extraction (default: None for full video)')
+    parser.add_argument('--colmap_threads', type=int, default=0,
+                       help='Limit SIFT extraction threads in COLMAP (default: 0 = auto)')
+    parser.add_argument('--colmap_max_image_size', type=int, default=0,
+                       help='Downscale images for SIFT to this max size on the long edge (default: 0 = no limit)')
     
     args = parser.parse_args()
     
@@ -806,7 +824,9 @@ def main():
     preprocessor = MultiViewPreprocessor(
         output_dir=args.output,
         use_gpu=args.use_gpu,
-        skip_colmap=args.skip_colmap
+        skip_colmap=args.skip_colmap,
+        colmap_threads=args.colmap_threads,
+        colmap_max_image_size=args.colmap_max_image_size
     )
     
     # Handle folder input
@@ -820,8 +840,8 @@ def main():
             fps=int(args.fps),
             skip_frames=args.skip_frames,
             resize=resize_tuple,
-            start_time=0.0,
-            end_time=None
+            start_time=float(args.start) if args.start is not None else 0.0,
+            end_time=float(args.end) if args.end is not None else None
         )
         
         if result['success']:
@@ -860,7 +880,9 @@ def main():
             calibration_file=args.calibration,
             target_fps=args.fps,
             extract_every_n=args.skip_frames,
-            max_frames=args.max_frames
+            max_frames=args.max_frames,
+            start_time=float(args.start) if args.start is not None else 0.0,
+            end_time=float(args.end) if args.end is not None else None
         )
         
         if result:
