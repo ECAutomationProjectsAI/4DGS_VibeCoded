@@ -109,6 +109,7 @@ if ! command -v colmap &> /dev/null; then
     apt-get install -y colmap || {
         echo "⚠ Could not install COLMAP via apt (may not be available on this image)."
         echo "  You can manually install from: https://github.com/colmap/colmap/releases"
+        echo "  Or build from source (with CUDA) using: bash tools/install_colmap_source.sh --with-cuda"
     }
 else
     echo "✓ COLMAP already installed"

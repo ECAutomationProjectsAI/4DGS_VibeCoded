@@ -122,6 +122,11 @@ python3 -c "import cv2, imageio, numpy; print(f'NumPy {numpy.__version__} - Depe
 
 - The installer attempts apt-get install colmap. If it fails on your base image, install COLMAP manually from the official releases (https://github.com/colmap/colmap/releases).
 - If you cannot install COLMAP, add `--skip_colmap` when running preprocessing to generate simple identity-pose transforms.
+- To build COLMAP from source with CUDA on Ubuntu (recommended for performance):
+  ```bash
+  # Builds COLMAP from source with CUDA support and GCC-10 workaround
+  bash tools/install_colmap_source.sh --with-cuda
+  ```
 
 #### Manual Install
 ```bash
