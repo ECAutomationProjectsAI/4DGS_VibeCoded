@@ -82,6 +82,14 @@ class MultiViewPreprocessor:
         self.colmap_dir.mkdir(exist_ok=True)
         database_path = self.colmap_dir / "database.db"
         
+        # Prepare a clean environment for headless COLMAP
+        colmap_env = os.environ.copy()
+        # Avoid cv2's Qt plugin path which can break COLMAP in headless environments
+        colmap_env.pop('QT_PLUGIN_PATH', None)
+        colmap_env.pop('QT_QPA_PLATFORM_PLUGIN_PATH', None)
+        # Force offscreen platform to avoid X11/xcb requirement
+        colmap_env['QT_QPA_PLATFORM'] = 'offscreen'
+
         # Step 1: Feature extraction
         logger.info("  1. Extracting features...")
         cmd = [
@@ -97,7 +105,7 @@ class MultiViewPreprocessor:
             cmd.extend(["--ImageReader.single_camera", "1"])
         
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            subprocess.run(cmd, check=True, capture_output=True, text=True, env=colmap_env)
         except subprocess.CalledProcessError as e:
             logger.error(f"Feature extraction failed: {e.stderr}")
             return False
@@ -116,7 +124,7 @@ class MultiViewPreprocessor:
         ]
         
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            subprocess.run(cmd, check=True, capture_output=True, text=True, env=colmap_env)
         except subprocess.CalledProcessError as e:
             logger.error(f"Feature matching failed: {e.stderr}")
             return False
@@ -134,7 +142,7 @@ class MultiViewPreprocessor:
         ]
         
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            subprocess.run(cmd, check=True, capture_output=True, text=True, env=colmap_env)
         except subprocess.CalledProcessError as e:
             logger.error(f"Sparse reconstruction failed: {e.stderr}")
             return False
@@ -160,7 +168,7 @@ class MultiViewPreprocessor:
         ]
         
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            subprocess.run(cmd, check=True, capture_output=True, text=True, env=colmap_env)
             logger.info("✅ COLMAP SfM completed successfully!")
             return True
         except subprocess.CalledProcessError as e:
