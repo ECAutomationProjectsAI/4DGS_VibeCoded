@@ -429,24 +429,77 @@ class MultiViewPreprocessor:
         
         logger.info(f"\nExtracted {len(frame_metadata)} total frames from {len(video_files)} cameras")
         
+        # Move frames/ -> extracted_frames/
+        extracted_frames_dir = self.output_dir / "extracted_frames"
+        extracted_frames_dir.mkdir(parents=True, exist_ok=True)
+        orig_frames_dir = self.output_dir / "frames"
+        if orig_frames_dir.exists():
+            for cam_dir in orig_frames_dir.glob("*"):
+                if cam_dir.is_dir():
+                    dst_cam_dir = extracted_frames_dir / cam_dir.name
+                    dst_cam_dir.mkdir(parents=True, exist_ok=True)
+                    for img_path in cam_dir.glob("*"):
+                        shutil.move(str(img_path), str(dst_cam_dir / img_path.name))
+            # remove empty original dir structure
+            try:
+                for cam_dir in orig_frames_dir.glob("*"):
+                    if cam_dir.is_dir():
+                        cam_dir.rmdir()
+                orig_frames_dir.rmdir()
+            except Exception:
+                pass
+        
+        # Update file paths in metadata to point to extracted_frames/
+        for fr in frame_metadata:
+            fr['file_path'] = fr['file_path'].replace('frames/', 'extracted_frames/')
+        
+        # Create frames_mapped/ with per-frame folders containing one image per camera
+        frames_mapped_dir = self.output_dir / "frames_mapped"
+        frames_mapped_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Build mapping by absolute frame index
+        frames_by_idx = {}
+        cams_set = set(camera_names)
+        for fr in frame_metadata:
+            idx = int(fr.get('frame_idx', -1))
+            if idx < 0:
+                # derive from filename if missing
+                try:
+                    idx = int(Path(fr['file_path']).stem.split('_')[-1])
+                except Exception:
+                    continue
+            cam = fr.get('camera', 'cam0')
+            frames_by_idx.setdefault(idx, {})[cam] = fr['file_path']
+        
+        # Create ordered list of indices present in all cameras
+        ordered_indices = sorted([idx for idx, cammap in frames_by_idx.items() if cams_set.issubset(set(cammap.keys()))])
+        logger.info(f"Mapped {len(ordered_indices)} frame groups across {len(cams_set)} cameras")
+        
+        # Materialize mapping folders
+        for i, idx in enumerate(ordered_indices, start=1):
+            group_dir = frames_mapped_dir / f"frame{i:06d}"
+            group_dir.mkdir(parents=True, exist_ok=True)
+            for cam in sorted(cams_set):
+                src_rel = frames_by_idx[idx][cam]
+                src_abs = self.output_dir / src_rel
+                dst_abs = group_dir / f"{cam}.jpg"
+                if src_abs.exists():
+                    shutil.copy2(src_abs, dst_abs)
+        
         # Initialize COLMAP status
         colmap_success = False
         
-        # Run COLMAP if we have multiple views and not skipping
+        # Run COLMAP on first 3 mapped frames if multi-view and not skipping
         if len(video_files) > 1 and not self.skip_colmap:
-            # Sample images for COLMAP to speed up matching
-            logger.info(f"\nPreparing images for COLMAP (sampling every {self.colmap_sample_rate}th frame)...")
             colmap_images_dir = self.colmap_dir / "images"
             colmap_images_dir.mkdir(parents=True, exist_ok=True)
-            sample_frames = frame_metadata[::self.colmap_sample_rate]
             copied = 0
-            for frame_info in tqdm(sample_frames, desc="Preparing COLMAP images"):
-                src = self.output_dir / frame_info['file_path']
-                dst = colmap_images_dir / f"{frame_info['camera']}_{Path(src).name}"
-                if src.exists():
-                    shutil.copy2(src, dst)
+            for group_dir in sorted(frames_mapped_dir.glob("frame*"))[:3]:
+                for img in group_dir.glob("*.jpg"):
+                    dst = colmap_images_dir / f"{group_dir.name}_{img.name}"
+                    shutil.copy2(img, dst)
                     copied += 1
-            logger.info(f"  Copied {copied} images for COLMAP")
+            logger.info(f"Prepared {copied} images for COLMAP from first 3 mapped frames")
 
             logger.info("\nRunning COLMAP for multi-view calibration...")
             colmap_success = self.run_colmap_sfm(
