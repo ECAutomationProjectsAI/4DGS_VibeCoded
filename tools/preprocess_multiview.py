@@ -352,8 +352,8 @@ class MultiViewPreprocessor:
                            fps: int = 30,
                            skip_frames: int = 1,
                            resize: Optional[Tuple[int, int]] = None,
-                           start_time: float = 0.0,
-                           end_time: Optional[float] = None) -> Dict:
+                           start_frame: int = 0,
+                           end_frame: Optional[int] = None) -> Dict:
         """
         Process all videos in a folder.
         
@@ -415,8 +415,8 @@ class MultiViewPreprocessor:
             camera_metadata = processor.process_single_camera_video(
                 video_path=str(video_file),
                 camera_name=camera_name,
-                start_time=start_time,
-                end_time=end_time
+                start_frame=start_frame,
+                end_frame=end_frame
             )
             
             # Check for errors
@@ -530,8 +530,8 @@ class MultiViewPreprocessor:
                       target_fps: float = 30.0,
                       extract_every_n: int = 1,
                       max_frames: int = -1,
-                      start_time: float = 0.0,
-                      end_time: Optional[float] = None) -> Dict:
+                      start_frame: int = 0,
+                      end_frame: Optional[int] = None) -> Dict:
         """
         Main processing pipeline for multi-view videos.
         
@@ -572,7 +572,11 @@ class MultiViewPreprocessor:
             use_gpu=self.use_gpu
         )
         
-        metadata = processor.process_multi_camera_videos(cameras, sync_method="timestamp", start_time=start_time, end_time=end_time)
+        # Apply strict frame range to camera configs
+        for cam in cameras:
+            cam.start_frame = start_frame
+            cam.end_frame = end_frame
+        metadata = processor.process_multi_camera_videos(cameras, sync_method="frame")
         
         # Check if we have frames
         if not metadata['frames']:
@@ -681,7 +685,7 @@ class MultiViewPreprocessor:
         # Create identity poses for each frame
         for frame_info in metadata['frames']:
             # Simple circular camera arrangement
-            cam_idx = list(metadata['cameras'].keys()).index(frame_info['camera'])
+            cam_idx = list(metadata['cameras'].keys()).index(frame_info['camera']) if metadata['cameras'] else 0
             angle = 2 * np.pi * cam_idx / len(metadata['cameras'])
             
             # Camera position on circle
@@ -762,27 +766,19 @@ def main():
                        help='Camera names for --videos option\n(For --video_folder, filenames are used automatically)')
     parser.add_argument('--calibration', type=str, default=None,
                        help='Pre-computed calibration file')
-    parser.add_argument('--fps', type=float, default=30.0,
-                       help='Target frame rate (default: 30)')
-    parser.add_argument('--skip_frames', type=int, default=1,
-                       help='Extract every N frames (default: 1)')
+    # Strict frame index selection (required behavior if provided)
+    parser.add_argument('--start_frame', type=int, default=0,
+                       help='Start frame index (inclusive). If set, only frames within [start_frame, end_frame) are processed.')
+    parser.add_argument('--end_frame', type=int, default=None,
+                       help='End frame index (exclusive). If set, only frames within [start_frame, end_frame) are processed.')
+    
+    # Keep only core options necessary for reproducibility
     parser.add_argument('--resize', nargs=2, type=int, metavar=('WIDTH', 'HEIGHT'),
                        help='Resize frames to WIDTH HEIGHT (e.g., 1920 1080)')
-    parser.add_argument('--max_frames', type=int, default=-1,
-                       help='Maximum frames to extract (-1 for all)')
     parser.add_argument('--use_gpu', action='store_true',
                        help='Use GPU acceleration for video preprocessing (not COLMAP)')
-    # COLMAP controls
+    # COLMAP controls (kept minimal)
     parser.add_argument('--skip_colmap', action='store_true', help='Skip running COLMAP')
-    parser.add_argument('--colmap_threads', type=int, default=0, help='SIFT threads (0=auto)')
-    parser.add_argument('--colmap_max_image_size', type=int, default=0, help='Downscale images for SIFT (0=original)')
-    parser.add_argument('--colmap_max_num_features', type=int, default=0, help='Limit SIFT features per image (0=default)')
-    parser.add_argument('--colmap_matcher', type=str, default='auto', choices=['auto','exhaustive','sequential'], help='Matcher strategy')
-    parser.add_argument('--colmap_sample_rate', type=int, default=10, help='Use every Nth frame for COLMAP sampling')
-    parser.add_argument('--start', type=float, default=0.0,
-                       help='Start time in seconds to begin extraction (default: 0.0)')
-    parser.add_argument('--end', type=float, default=None,
-                       help='End time in seconds to stop extraction (default: None for full video)')
     
     args = parser.parse_args()
     
@@ -790,12 +786,7 @@ def main():
     preprocessor = MultiViewPreprocessor(
         output_dir=args.output,
         use_gpu=args.use_gpu,
-        skip_colmap=args.skip_colmap,
-        colmap_threads=args.colmap_threads,
-        colmap_max_image_size=args.colmap_max_image_size,
-        colmap_max_num_features=args.colmap_max_num_features,
-        colmap_matcher=args.colmap_matcher,
-        colmap_sample_rate=args.colmap_sample_rate
+        skip_colmap=args.skip_colmap
     )
     
     # Handle folder input
@@ -806,11 +797,11 @@ def main():
         result = preprocessor.process_video_folder(
             video_folder=args.video_folder,
             output_dir=args.output,
-            fps=int(args.fps),
-            skip_frames=args.skip_frames,
+            fps=30,
+            skip_frames=1,
             resize=resize_tuple,
-            start_time=float(args.start) if args.start is not None else 0.0,
-            end_time=float(args.end) if args.end is not None else None
+            start_frame=args.start_frame,
+            end_frame=args.end_frame
         )
         
         if result['success']:
@@ -847,11 +838,11 @@ def main():
             video_paths=args.videos,
             camera_names=args.camera_names,
             calibration_file=args.calibration,
-            target_fps=args.fps,
-            extract_every_n=args.skip_frames,
-            max_frames=args.max_frames,
-            start_time=float(args.start) if args.start is not None else 0.0,
-            end_time=float(args.end) if args.end is not None else None
+            target_fps=30,
+            extract_every_n=1,
+            max_frames=-1,
+            start_frame=args.start_frame,
+            end_frame=args.end_frame
         )
         
         if result:

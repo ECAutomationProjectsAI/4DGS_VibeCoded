@@ -67,8 +67,8 @@ class VideoProcessor:
         video_path: str,
         camera_name: str = "cam0",
         calibration: Optional[Dict[str, Any]] = None,
-        start_time: float = 0.0,
-        end_time: Optional[float] = None
+        start_frame: int = 0,
+        end_frame: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Process a single camera video.
@@ -112,9 +112,20 @@ class VideoProcessor:
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
-        # Calculate frame range
-        start_frame = int(start_time * fps)
-        end_frame = int(end_time * fps) if end_time else total_frames
+        # Calculate frame range (frame indices, inclusive-exclusive)
+        start_frame = max(0, int(start_frame))
+        end_frame = int(end_frame) if end_frame is not None else total_frames
+        end_frame = min(end_frame, total_frames)
+        if end_frame <= start_frame:
+            cap.release()
+            return {
+                "camera_name": camera_name,
+                "error": f"Invalid frame range: start_frame={start_frame}, end_frame={end_frame}",
+                "calibration": calibration,
+                "frames": [],
+                "fps": fps,
+                "resolution": [width, height]
+            }
         
         # Set up calibration if not provided
         if calibration is None:
@@ -136,8 +147,8 @@ class VideoProcessor:
         
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         
-        pbar = tqdm(total=(end_frame - start_frame) // self.extract_every_n, 
-                   desc=f"Extracting {camera_name}")
+        total_to_extract = max(0, (end_frame - start_frame + (self.extract_every_n - 1)) // self.extract_every_n)
+        pbar = tqdm(total=total_to_extract, desc=f"Extracting {camera_name}")
         
         while cap.isOpened() and frame_idx < end_frame - start_frame:
             ret, frame = cap.read()
@@ -154,15 +165,13 @@ class VideoProcessor:
                 frame_path = cam_dir / frame_filename
                 cv2.imwrite(str(frame_path), frame)
                 
-                # Calculate timestamp
-                timestamp = (start_frame + frame_idx) / fps
-                
-                # Add to metadata
+                # Add to metadata (strictly by frame index)
+                abs_frame_idx = start_frame + frame_idx
                 frames_metadata.append({
                     "file_path": f"frames/{camera_name}/{frame_filename}",
-                    "time": timestamp,
+                    "time": abs_frame_idx / fps,
                     "camera": camera_name,
-                    "frame_idx": frame_idx
+                    "frame_idx": abs_frame_idx
                 })
                 
                 pbar.update(1)
@@ -183,7 +192,7 @@ class VideoProcessor:
     def process_multi_camera_videos(
         self,
         cameras: List[CameraConfig],
-        sync_method: str = "timestamp"
+        sync_method: str = "frame"
     ) -> Dict[str, Any]:
         """
         Process multiple synchronized camera videos.
@@ -208,15 +217,14 @@ class VideoProcessor:
         for cam_config in cameras:
             logger.info(f"Processing camera: {cam_config.name}")
             
-            # Adjust start time based on sync offset
-            start_time = cam_config.sync_offset
-            
+            # Use explicit frame indices strictly
             try:
                 cam_metadata = self.process_single_camera_video(
                     video_path=cam_config.video_path,
                     camera_name=cam_config.name,
                     calibration=cam_config.calibration,
-                    start_time=start_time
+                    start_frame=cam_config.start_frame,
+                    end_frame=cam_config.end_frame
                 )
                 
                 # Check if video processing failed
