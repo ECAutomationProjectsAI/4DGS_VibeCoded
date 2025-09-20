@@ -21,6 +21,8 @@ def main():
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--sh_degree', type=int, default=3)
     parser.add_argument('--renderer', type=str, default='naive', choices=['naive','fast'])
+    parser.add_argument('--start_frame', type=int, default=None, help='Start frame index (inclusive)')
+    parser.add_argument('--end_frame', type=int, default=None, help='End frame index (exclusive)')
     args = parser.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() and args.device=='cuda' else 'cpu')
@@ -32,7 +34,7 @@ def main():
     model = GaussianModel4D(sh_degree=args.sh_degree, device=device)
     model.load_state_dict_compact(state)
 
-    images, cams, times = load_sequence(args.data_root)
+    images, cams, times = load_sequence(args.data_root, start_frame=args.start_frame, end_frame=args.end_frame)
     F, C, H, W = images.shape
 
     for f in range(F):

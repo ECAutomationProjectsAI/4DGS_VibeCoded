@@ -102,15 +102,11 @@ Output structure:
     parser.add_argument('-o', '--output', required=True,
                        help='Output directory for processed data')
     
-    # Video processing options
-    parser.add_argument('--start', type=float, default=0.0,
-                       help='Start time in seconds')
-    parser.add_argument('--end', type=float, default=None,
-                       help='End time in seconds')
-    parser.add_argument('--fps', type=float, default=30.0,
-                       help='Target FPS for extraction (default: 30)')
-    parser.add_argument('--extract-every', type=int, default=1,
-                       help='Extract every N frames (default: 1)')
+    # Strict frame index selection
+    parser.add_argument('--start_frame', type=int, default=0,
+                       help='Start frame index (inclusive)')
+    parser.add_argument('--end_frame', type=int, default=None,
+                       help='End frame index (exclusive)')
     parser.add_argument('--resize', nargs=2, type=int, metavar=('WIDTH', 'HEIGHT'),
                        help='Resize frames to specified dimensions')
     
@@ -119,20 +115,13 @@ Output structure:
                        help='Camera calibration JSON file or string')
     parser.add_argument('--camera-names', nargs='+',
                        help='Names for cameras (default: cam0, cam1, ...)')
-    parser.add_argument('--sync-offsets', nargs='+', type=float,
-                       help='Time offsets for camera synchronization')
     
-    # COLMAP options
-    parser.add_argument('--colmap', action='store_true',
-                       help='Also extract in COLMAP format for SfM')
-    parser.add_argument('--colmap-dir', type=str,
-                       help='Output directory for COLMAP (default: output/colmap)')
+    # COLMAP options (removed for simplification)
+    
     
     # Processing options
     parser.add_argument('--use-gpu', action='store_true',
                        help='Use GPU acceleration if available')
-    parser.add_argument('--workers', type=int, default=1,
-                       help='Number of parallel workers')
     parser.add_argument('--verbose', action='store_true',
                        help='Verbose output')
     
@@ -167,9 +156,9 @@ Output structure:
     # Create processor
     processor = VideoProcessor(
         output_dir=args.output,
-        target_fps=args.fps,
+        target_fps=30,
         resize=tuple(args.resize) if args.resize else None,
-        extract_every_n=args.extract_every,
+        extract_every_n=1,
         use_gpu=args.use_gpu
     )
     
@@ -194,18 +183,28 @@ Output structure:
                 name=cam_name,
                 video_path=video_path,
                 calibration=calibration.get(cam_name) if calibration else None,
-                sync_offset=sync_offset
+                start_frame=args.start_frame,
+                end_frame=args.end_frame
             ))
         
         # Process multi-camera
-        metadata = processor.process_multi_camera_videos(cameras)
+        metadata = processor.process_multi_camera_videos(cameras, sync_method='frame')
         
     elif os.path.isdir(input_path):
         # Directory of videos
-        metadata = processor.process_video_directory(
-            input_path,
-            calibration_file=args.calibration
-        )
+        # Process each file in the directory as a camera
+        videos = sorted([str(Path(input_path, p)) for p in os.listdir(input_path) if p.lower().endswith(('.mp4','.mov','.avi','.mkv'))])
+        cameras = []
+        for idx, vp in enumerate(videos):
+            cam_name = f"cam{idx}"
+            cameras.append(CameraConfig(
+                name=cam_name,
+                video_path=vp,
+                calibration=calibration.get(cam_name) if calibration else None,
+                start_frame=args.start_frame,
+                end_frame=args.end_frame
+            ))
+        metadata = processor.process_multi_camera_videos(cameras, sync_method='frame')
         
     else:
         # Single video
@@ -217,8 +216,8 @@ Output structure:
             input_path,
             camera_name=args.camera_names[0] if args.camera_names else "cam0",
             calibration=calibration,
-            start_time=args.start,
-            end_time=args.end
+            start_frame=args.start_frame,
+            end_frame=args.end_frame
         )
         
         # Check if single video failed

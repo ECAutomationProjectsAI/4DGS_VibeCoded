@@ -36,7 +36,13 @@ def _maybe_load_mask(mask_path: str, H: int, W: int) -> Optional[torch.Tensor]:
     return mk
 
 
-def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = None, max_frames: int = -1, max_memory_gb: float = -1) -> Tuple[torch.Tensor, list, torch.Tensor, Optional[torch.Tensor]]:
+def load_sequence(root: str,
+                  time_norm: bool = True,
+                  mask_root: Optional[str] = None,
+                  max_frames: int = -1,
+                  max_memory_gb: float = -1,
+                  start_frame: Optional[int] = None,
+                  end_frame: Optional[int] = None) -> Tuple[torch.Tensor, list, torch.Tensor, Optional[torch.Tensor]]:
     """
     Expect structure:
     root/
@@ -76,6 +82,15 @@ def load_sequence(root: str, time_norm: bool = True, mask_root: Optional[str] = 
 
     K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
     frames = meta['frames']
+
+    # Strict frame range filtering if requested
+    if start_frame is not None or end_frame is not None:
+        sf = 0 if start_frame is None else int(start_frame)
+        ef = int(1e18) if end_frame is None else int(end_frame)
+        def in_range(fr, idx):
+            fid = fr.get('frame_idx', idx)
+            return sf <= fid < ef
+        frames = [fr for idx, fr in enumerate(frames) if in_range(fr, idx)]
     
     # Calculate memory usage per frame
     bytes_per_pixel = 4  # float32

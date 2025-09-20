@@ -63,6 +63,8 @@ def main():
     parser.add_argument('--max_points', type=int, default=-1, help='Maximum Gaussians (-1 for auto based on GPU memory)')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
     parser.add_argument('--max_frames', type=int, default=-1, help='Maximum frames to load (-1 for auto)')
+    parser.add_argument('--start_frame', type=int, default=None, help='Start frame index (inclusive)')
+    parser.add_argument('--end_frame', type=int, default=None, help='End frame index (exclusive)')
     parser.add_argument('--max_memory_gb', type=float, default=-1, help='Maximum RAM for images (-1 for auto 90% of available)')
     parser.add_argument('--memory_fraction', type=float, default=0.90, help='Fraction of available memory to use (0.90 = 90%)')
     parser.add_argument('--vram_fraction', type=float, default=0.95, help='Fraction of GPU memory to use (0.95 = 95%)')
@@ -219,7 +221,9 @@ def main():
             args.data_root, 
             mask_root=args.mask_root,
             max_frames=args.max_frames,
-            max_memory_gb=args.max_memory_gb
+            max_memory_gb=args.max_memory_gb,
+            start_frame=args.start_frame,
+            end_frame=args.end_frame
         )
         F, C, H, W = images.shape
         print(f"\nSuccessfully loaded {F} frames, resolution: {W}x{H}")

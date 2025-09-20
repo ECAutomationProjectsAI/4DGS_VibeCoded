@@ -15,9 +15,11 @@ def main():
     parser = argparse.ArgumentParser(description='Evaluate renders against ground truth')
     parser.add_argument('--data_root', type=str, required=True)
     parser.add_argument('--renders_dir', type=str, required=True)
+    parser.add_argument('--start_frame', type=int, default=None, help='Start frame index (inclusive)')
+    parser.add_argument('--end_frame', type=int, default=None, help='End frame index (exclusive)')
     args = parser.parse_args()
 
-    images, cams, times = load_sequence(args.data_root)
+    images, cams, times = load_sequence(args.data_root, start_frame=args.start_frame, end_frame=args.end_frame)
     F, C, H, W = images.shape
 
     psnrs = []
