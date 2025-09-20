@@ -38,13 +38,27 @@ logger = logging.getLogger(__name__)
 class MultiViewPreprocessor:
     """Complete preprocessing pipeline for 4DGS."""
     
-    def __init__(self, output_dir: str, use_gpu: bool = False, skip_colmap: bool = False, colmap_threads: int = 0, colmap_max_image_size: int = 0):
+    def __init__(self,
+                 output_dir: str,
+                 use_gpu: bool = False,
+                 skip_colmap: bool = False,
+                 colmap_threads: int = 0,
+                 colmap_max_image_size: int = 0,
+                 colmap_max_num_features: int = 0,
+                 colmap_matcher: str = "auto",
+                 colmap_sample_rate: int = 10):
         """
         Initialize preprocessor.
         
         Args:
             output_dir: Output directory for processed data
-            use_gpu: Use GPU acceleration if available
+            use_gpu: Use GPU acceleration if available (for video processing, not COLMAP)
+            skip_colmap: Skip running COLMAP even for multi-view
+            colmap_threads: Limit SIFT extraction threads (0 = default)
+            colmap_max_image_size: Downscale images for SIFT (0 = original)
+            colmap_max_num_features: Limit max SIFT features per image (0 = default)
+            colmap_matcher: 'auto' | 'exhaustive' | 'sequential'
+            colmap_sample_rate: Use every Nth frame for COLMAP to reduce memory/work
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -52,11 +66,18 @@ class MultiViewPreprocessor:
         self.skip_colmap = skip_colmap
         self.colmap_threads = int(colmap_threads) if colmap_threads is not None else 0
         self.colmap_max_image_size = int(colmap_max_image_size) if colmap_max_image_size is not None else 0
+        self.colmap_max_num_features = int(colmap_max_num_features) if colmap_max_num_features is not None else 0
+        self.colmap_matcher = colmap_matcher
+        self.colmap_sample_rate = max(1, int(colmap_sample_rate))
         
         # Subdirectories
         self.frames_dir = self.output_dir / "frames"
         self.colmap_dir = self.output_dir / "colmap"
         self.masks_dir = self.output_dir / "masks"
+        
+        # Logs
+        self.logs_dir = self.colmap_dir / "logs"
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
         
     def run_colmap_sfm(self, 
                        image_dir: str,
@@ -64,19 +85,7 @@ class MultiViewPreprocessor:
                        single_camera: bool = False,
                        gpu_index: int = 0) -> bool:
         """
-        Run COLMAP Structure-from-Motion pipeline.
-        
-        Based on SpacetimeGaussian approach: use SfM across timestamps
-        to get initial 3D points and camera poses.
-        
-        Args:
-            image_dir: Directory containing images
-            camera_model: Camera model (OPENCV, PINHOLE, etc.)
-            single_camera: Whether all images are from same camera
-            gpu_index: GPU index for feature extraction
-            
-        Returns:
-            Success status
+        Run COLMAP Structure-from-Motion pipeline with streaming logs and memory controls.
         """
         logger.info("Running COLMAP SfM pipeline...")
         
@@ -86,161 +95,117 @@ class MultiViewPreprocessor:
         
         # Prepare a clean environment for headless COLMAP
         colmap_env = os.environ.copy()
-        # Avoid cv2's Qt plugin path which can break COLMAP in headless environments
         colmap_env.pop('QT_PLUGIN_PATH', None)
         colmap_env.pop('QT_QPA_PLATFORM_PLUGIN_PATH', None)
-        # Force offscreen platform to avoid X11/xcb requirement
         colmap_env['QT_QPA_PLATFORM'] = 'offscreen'
+        # Avoid over-threading (can cause RAM spikes)
+        colmap_env.setdefault('OMP_NUM_THREADS', str(self.colmap_threads or os.cpu_count() or 4))
+
+        # Util: run command and stream to logger and file
+        def _run_and_stream(cmd: List[str], log_name: str) -> int:
+            log_path = self.logs_dir / log_name
+            logger.info(f"[COLMAP] {' '.join(cmd)}")
+            with open(log_path, 'w', encoding='utf-8') as lf:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    line = line.rstrip()
+                    if line:
+                        logger.info(line)
+                        lf.write(line + "\n")
+                return proc.wait()
 
         # Helper: check if a COLMAP subcommand supports an option
         def _colmap_has_option(subcmd: str, option: str) -> bool:
             try:
-                help_proc = subprocess.run([
-                    "colmap", subcmd, "-h"
-                ], check=False, capture_output=True, text=True, env=colmap_env)
+                help_proc = subprocess.run(["colmap", subcmd, "-h"], check=False, capture_output=True, text=True, env=colmap_env)
                 return option in (help_proc.stdout or "")
             except Exception:
                 return False
 
         # Step 1: Feature extraction
-        logger.info("  1. Extracting features...")
+        logger.info("  1) Extracting features...")
         cmd = [
             "colmap", "feature_extractor",
             "--database_path", str(database_path),
             "--image_path", str(image_dir),
             "--ImageReader.camera_model", camera_model
         ]
-        # Force CPU SIFT in headless environments if supported to avoid OpenGL context errors
+        # SIFT options (favor stability and lower memory)
         if _colmap_has_option("feature_extractor", "--SiftExtraction.use_gpu"):
-            cmd.extend(["--SiftExtraction.use_gpu", "0"])  # disable GPU SIFT
-        # Limit SIFT threads to control RAM use, if requested
+            cmd.extend(["--SiftExtraction.use_gpu", "0"])  # safer in headless containers
         if self.colmap_threads > 0 and _colmap_has_option("feature_extractor", "--SiftExtraction.num_threads"):
             cmd.extend(["--SiftExtraction.num_threads", str(self.colmap_threads)])
-        # Limit max image size to reduce memory, if requested
         if self.colmap_max_image_size > 0 and _colmap_has_option("feature_extractor", "--SiftExtraction.max_image_size"):
             cmd.extend(["--SiftExtraction.max_image_size", str(self.colmap_max_image_size)])
-        
+        if self.colmap_max_num_features > 0 and _colmap_has_option("feature_extractor", "--SiftExtraction.max_num_features"):
+            cmd.extend(["--SiftExtraction.max_num_features", str(self.colmap_max_num_features)])
         if single_camera:
             cmd.extend(["--ImageReader.single_camera", "1"])
-        
-        try:
-            # Stream COLMAP output for visibility
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.strip()
-                if line:
-                    logger.info(line)
-            ret = proc.wait()
-            if ret != 0:
-                logger.error(f"Feature extraction failed with code {ret}")
-                return False
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Feature extraction failed: {e.stderr}")
+        ret = _run_and_stream(cmd, "01_feature_extractor.log")
+        if ret != 0:
+            logger.error(f"Feature extraction failed with code {ret}")
             return False
-        except FileNotFoundError:
-            logger.error("COLMAP not found! Please install COLMAP and add it to PATH")
-            logger.info("Download from: https://github.com/colmap/colmap/releases")
-            return False
-        
+
         # Step 2: Feature matching
-        # Choose matcher to avoid O(N^2) for large N
-        num_images = len([f for f in os.listdir(image_dir) if f.lower().endswith((".jpg",".jpeg",".png"))])
-        if num_images > 800:
-            logger.info(f"  2. Matching features (sequential matcher, images={num_images})...")
+        # Decide matcher
+        img_exts = (".jpg", ".jpeg", ".png", ".JPG", ".PNG")
+        num_images = len([f for f in os.listdir(image_dir) if f.endswith(img_exts)])
+        matcher = self.colmap_matcher
+        if matcher == "auto":
+            matcher = "sequential" if num_images > 800 else "exhaustive"
+        logger.info(f"  2) Matching features ({matcher}, images={num_images})...")
+        if matcher == "sequential":
             cmd = [
                 "colmap", "sequential_matcher",
                 "--database_path", str(database_path),
                 "--SequentialMatching.overlap", "5"
             ]
         else:
-            logger.info(f"  2. Matching features (exhaustive matcher, images={num_images})...")
-            cmd = [
-                "colmap", "exhaustive_matcher",
-                "--database_path", str(database_path)
-            ]
-        # Force CPU matching if supported to avoid GPU dependencies
+            cmd = ["colmap", "exhaustive_matcher", "--database_path", str(database_path)]
         if _colmap_has_option(cmd[1], "--SiftMatching.use_gpu"):
-            cmd.extend(["--SiftMatching.use_gpu", "0"])  # disable GPU matching
-        
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.strip()
-                if line:
-                    logger.info(line)
-            ret = proc.wait()
-            if ret != 0:
-                logger.error(f"Feature matching failed with code {ret}")
-                return False
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Feature matching failed: {e.stderr}")
+            cmd.extend(["--SiftMatching.use_gpu", "0"])  # safer
+        ret = _run_and_stream(cmd, "02_matcher.log")
+        if ret != 0:
+            logger.error(f"Feature matching failed with code {ret}")
             return False
-        
-        # Step 3: Sparse reconstruction
-        logger.info("  3. Running sparse reconstruction...")
+
+        # Step 3: Sparse reconstruction (mapper)
+        logger.info("  3) Running sparse reconstruction (mapper)...")
         sparse_dir = self.colmap_dir / "sparse"
         sparse_dir.mkdir(exist_ok=True)
-        
         cmd = [
             "colmap", "mapper",
             "--database_path", str(database_path),
             "--image_path", str(image_dir),
             "--output_path", str(sparse_dir)
         ]
-        
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.strip()
-                if line:
-                    logger.info(line)
-            ret = proc.wait()
-            if ret != 0:
-                logger.error(f"Sparse reconstruction failed with code {ret}")
-                return False
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Sparse reconstruction failed: {e.stderr}")
+        ret = _run_and_stream(cmd, "03_mapper.log")
+        if ret != 0:
+            logger.error(f"Sparse reconstruction failed with code {ret}")
             return False
-        
+
         # Step 4: Convert to text format
-        logger.info("  4. Converting to text format...")
+        logger.info("  4) Converting to text format...")
         sparse_txt_dir = self.colmap_dir / "sparse_txt"
         sparse_txt_dir.mkdir(exist_ok=True)
-        
-        # Find the reconstruction folder (usually '0')
         recon_dirs = list(sparse_dir.glob("*"))
         if not recon_dirs:
             logger.error("No reconstruction found!")
             return False
-        
-        recon_dir = recon_dirs[0]  # Use first reconstruction
-        
+        recon_dir = recon_dirs[0]
         cmd = [
             "colmap", "model_converter",
             "--input_path", str(recon_dir),
             "--output_path", str(sparse_txt_dir),
             "--output_type", "TXT"
         ]
-        
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=colmap_env)
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                line = line.strip()
-                if line:
-                    logger.info(line)
-            ret = proc.wait()
-            if ret != 0:
-                logger.error(f"Model conversion failed with code {ret}")
-                return False
-            logger.info("✅ COLMAP SfM completed successfully!")
-            return True
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Model conversion failed: {e.stderr}")
+        ret = _run_and_stream(cmd, "04_model_converter.log")
+        if ret != 0:
+            logger.error(f"Model conversion failed with code {ret}")
             return False
+        logger.info("✅ COLMAP SfM completed successfully!")
+        return True
     
     def parse_colmap_output(self) -> Dict:
         """
@@ -470,10 +435,10 @@ class MultiViewPreprocessor:
         # Run COLMAP if we have multiple views and not skipping
         if len(video_files) > 1 and not self.skip_colmap:
             # Sample images for COLMAP to speed up matching
-            logger.info("\nPreparing images for COLMAP (sampling every 10th frame)...")
+            logger.info(f"\nPreparing images for COLMAP (sampling every {self.colmap_sample_rate}th frame)...")
             colmap_images_dir = self.colmap_dir / "images"
             colmap_images_dir.mkdir(parents=True, exist_ok=True)
-            sample_frames = frame_metadata[::10]
+            sample_frames = frame_metadata[::self.colmap_sample_rate]
             copied = 0
             for frame_info in tqdm(sample_frames, desc="Preparing COLMAP images"):
                 src = self.output_dir / frame_info['file_path']
@@ -806,17 +771,18 @@ def main():
     parser.add_argument('--max_frames', type=int, default=-1,
                        help='Maximum frames to extract (-1 for all)')
     parser.add_argument('--use_gpu', action='store_true',
-                       help='Use GPU acceleration for COLMAP')
-    parser.add_argument('--skip_colmap', action='store_true',
-                       help='Skip COLMAP and generate simple transforms (identity poses, estimated intrinsics)')
+                       help='Use GPU acceleration for video preprocessing (not COLMAP)')
+    # COLMAP controls
+    parser.add_argument('--skip_colmap', action='store_true', help='Skip running COLMAP')
+    parser.add_argument('--colmap_threads', type=int, default=0, help='SIFT threads (0=auto)')
+    parser.add_argument('--colmap_max_image_size', type=int, default=0, help='Downscale images for SIFT (0=original)')
+    parser.add_argument('--colmap_max_num_features', type=int, default=0, help='Limit SIFT features per image (0=default)')
+    parser.add_argument('--colmap_matcher', type=str, default='auto', choices=['auto','exhaustive','sequential'], help='Matcher strategy')
+    parser.add_argument('--colmap_sample_rate', type=int, default=10, help='Use every Nth frame for COLMAP sampling')
     parser.add_argument('--start', type=float, default=0.0,
                        help='Start time in seconds to begin extraction (default: 0.0)')
     parser.add_argument('--end', type=float, default=None,
                        help='End time in seconds to stop extraction (default: None for full video)')
-    parser.add_argument('--colmap_threads', type=int, default=0,
-                       help='Limit SIFT extraction threads in COLMAP (default: 0 = auto)')
-    parser.add_argument('--colmap_max_image_size', type=int, default=0,
-                       help='Downscale images for SIFT to this max size on the long edge (default: 0 = no limit)')
     
     args = parser.parse_args()
     
@@ -826,7 +792,10 @@ def main():
         use_gpu=args.use_gpu,
         skip_colmap=args.skip_colmap,
         colmap_threads=args.colmap_threads,
-        colmap_max_image_size=args.colmap_max_image_size
+        colmap_max_image_size=args.colmap_max_image_size,
+        colmap_max_num_features=args.colmap_max_num_features,
+        colmap_matcher=args.colmap_matcher,
+        colmap_sample_rate=args.colmap_sample_rate
     )
     
     # Handle folder input
