@@ -270,7 +270,8 @@ class MultiViewPreprocessor:
     
     def generate_transforms_json(self,
                                 colmap_data: Dict,
-                                frame_metadata: List[Dict]) -> Dict:
+                                frame_metadata: List[Dict],
+                                name_map: Optional[Dict[str, str]] = None) -> Dict:
         """
         Generate transforms.json file compatible with 4DGS training.
         
@@ -316,34 +317,39 @@ class MultiViewPreprocessor:
                 # Camera angle from focal length
                 transforms['camera_angle_x'] = 2 * np.arctan(cam['width'] / (2 * transforms['fl_x']))
         
-        # Process each frame
-        for frame_info in frame_metadata:
-            file_path = frame_info['file_path']
-            image_name = Path(file_path).name
+        # Build quick lookup for metadata by original file path
+        meta_by_path = {fr['file_path']: fr for fr in frame_metadata}
+        
+        # Prefer iterating over COLMAP images to ensure we add only calibrated frames
+        for image_name, img_data in colmap_data.get('images', {}).items():
+            # Determine original file path
+            if name_map and image_name in name_map:
+                file_path = name_map[image_name]
+            else:
+                # Fallback: try to match by basename
+                # Find any metadata entry with matching basename
+                matches = [p for p in meta_by_path.keys() if Path(p).name == image_name]
+                if not matches:
+                    continue
+                file_path = matches[0]
             
-            if image_name in colmap_data['images']:
-                img_data = colmap_data['images'][image_name]
-                
-                # Convert quaternion and translation to 4x4 matrix
-                qw, qx, qy, qz = img_data['quaternion']
-                tx, ty, tz = img_data['translation']
-                
-                # Quaternion to rotation matrix
-                R = quaternion_to_matrix(qw, qx, qy, qz)
-                
-                # Create c2w (camera-to-world) transform
-                c2w = np.eye(4)
-                c2w[:3, :3] = R.T  # Inverse rotation
-                c2w[:3, 3] = -R.T @ np.array([tx, ty, tz])  # Camera position
-                
-                frame_data = {
-                    'file_path': file_path,
-                    'transform_matrix': c2w.tolist(),
-                    'time': frame_info.get('time', 0.0),  # Temporal information
-                    'camera': frame_info.get('camera', 'cam0')
-                }
-                
-                transforms['frames'].append(frame_data)
+            frame_info = meta_by_path.get(file_path, {})
+            
+            # Convert quaternion and translation to 4x4 matrix
+            qw, qx, qy, qz = img_data['quaternion']
+            tx, ty, tz = map(float, img_data['translation'])
+            R = quaternion_to_matrix(qw, qx, qy, qz)
+            c2w = np.eye(4)
+            c2w[:3, :3] = R.T
+            c2w[:3, 3] = -R.T @ np.array([tx, ty, tz])
+            
+            frame_data = {
+                'file_path': file_path,
+                'transform_matrix': c2w.tolist(),
+                'time': frame_info.get('time', 0.0),
+                'camera': frame_info.get('camera', 'cam0')
+            }
+            transforms['frames'].append(frame_data)
         
         return transforms
     
@@ -491,16 +497,31 @@ class MultiViewPreprocessor:
         # Initialize COLMAP status
         colmap_success = False
         
-        # Run COLMAP on first 3 mapped frames if multi-view and not skipping
+        # Run COLMAP on first N mapped frames if multi-view and not skipping
         if len(video_files) > 1 and not self.skip_colmap:
             colmap_images_dir = self.colmap_dir / "images"
             colmap_images_dir.mkdir(parents=True, exist_ok=True)
             copied = 0
-            for group_dir in sorted(frames_mapped_dir.glob("frame*"))[: self.colmap_mapped_groups ]:
-                for img in group_dir.glob("*.jpg"):
-                    dst = colmap_images_dir / f"{group_dir.name}_{img.name}"
-                    shutil.copy2(img, dst)
-                    copied += 1
+            name_map = {}
+            # Build ordered group list with original idx mapping
+            # Reconstruct using ordered_indices and frames_by_idx from above
+            # Enumerate in the same order we created frames_mapped
+            for gi, idx in enumerate(ordered_indices, start=1):
+                if gi > self.colmap_mapped_groups:
+                    break
+                cammap = frames_by_idx[idx]
+                group_name = f"frame{gi:06d}"
+                for cam, rel_path in cammap.items():
+                    src_abs = self.output_dir / rel_path
+                    colmap_name = f"{group_name}_{cam}.jpg"
+                    dst_abs = colmap_images_dir / colmap_name
+                    if src_abs.exists():
+                        shutil.copy2(src_abs, dst_abs)
+                        name_map[colmap_name] = rel_path
+                        copied += 1
+            # Optionally write name_map for debugging
+            with open(self.colmap_dir / "name_map.json", 'w') as f:
+                json.dump(name_map, f, indent=2)
             logger.info(f"Prepared {copied} images for COLMAP from first {self.colmap_mapped_groups} mapped frames")
 
             logger.info("\nRunning COLMAP for multi-view calibration...")
@@ -511,9 +532,9 @@ class MultiViewPreprocessor:
             )
             
             if colmap_success:
-                # Parse COLMAP output and generate transforms
+                # Parse COLMAP output and generate transforms (use name_map to match files)
                 colmap_data = self.parse_colmap_output()
-                transforms = self.generate_transforms_json(colmap_data, frame_metadata)
+                transforms = self.generate_transforms_json(colmap_data, frame_metadata, name_map=name_map)
                 
                 # Save transforms.json
                 transforms_path = self.output_dir / "transforms.json"
