@@ -351,9 +351,54 @@ def main():
     loss_history = []
     memory_warnings = 0
     
+    def _clamp_model_sanity():
+        p = model.primitive
+        # Keep logs in reasonable bounds to avoid degenerate scales
+        p._log_scale.data.clamp_(-6.0, 2.0)
+        p._log_scale_t.data.clamp_(-8.0, 2.0)
+        # Re-normalize quaternions
+        p._quat.data = p._quat.data / (p._quat.data.norm(dim=-1, keepdim=True) + 1e-8)
+        # Opacity raw parameters: keep in finite range
+        p._opacity.data = p._opacity.data.clamp(-6.0, 6.0)
+        # Replace any NaNs in SH with zeros
+        nan_mask = ~torch.isfinite(p._rgb_sh.data)
+        if nan_mask.any():
+            p._rgb_sh.data[nan_mask] = 0.0
+
+    def _render_with_guard(xyz_t, dirs, K, R, tt, H, W, time, active_sh_degree):
+        # Try fast renderer first
+        if args.renderer == 'fast':
+            try:
+                outputs = renderer(
+                    positions=xyz_t,
+                    scales=model.scales,
+                    rotations=model.quat,
+                    colors=model.get_rgb(dirs, active_sh_degree if args.sh_degree>0 else 0),
+                    opacities=model.opacity,
+                    camera_position=-R.T @ tt,
+                    camera_rotation=R.T,
+                    camera_intrinsics=K
+                )
+                img_fast = outputs['rgb'].permute(2, 0, 1)
+                if torch.isfinite(img_fast).all():
+                    a_fast = outputs.get('visibility', torch.ones(H, W, device=device))
+                    d_fast = torch.zeros(H, W, device=device)
+                    return img_fast, a_fast, d_fast, 'fast'
+                else:
+                    print("\n⚠️ Fast renderer produced non-finite values; falling back to naive for this iter")
+            except Exception as e:
+                print(f"\n⚠️ Fast renderer exception: {e}. Falling back to naive for this iter")
+        # Naive fallback (elliptical on)
+        img_n, a_n, d_n = forward_splat(
+            xyz_t, model.t, model.scales, model.scale_t, model.opacity.squeeze(-1), model.rgb_sh,
+            dirs, active_sh_degree if args.sh_degree>0 else 0, K, R, tt, H, W, time, quat=model.quat, elliptical=True
+        )
+        return img_n, a_n, d_n, 'naive'
+
     pbar = tqdm(range(1, args.iters + 1), desc='Training', unit='iter')
     for it in pbar:
         optim.zero_grad()
+        _clamp_model_sanity()
         # Pick a random frame
         fidx = torch.randint(0, F, (1,)).item()
         gt = images[fidx].to(device)
@@ -370,26 +415,15 @@ def main():
 
         # Use time-dependent positions x(t) = x + v * t
         xyz_t = model.position_at_time(time)
-        if args.renderer == 'fast':
-            # Use fast renderer with CUDA acceleration (fallback to naive if unavailable)
-            outputs = renderer(
-                positions=xyz_t,
-                scales=model.scales,
-                rotations=model.quat,
-                colors=model.get_rgb(dirs, active_sh_degree if args.sh_degree>0 else 0),
-                opacities=model.opacity,
-                camera_position=-R.T @ tt,
-                camera_rotation=R.T,
-                camera_intrinsics=K
-            )
-            img = outputs['rgb'].permute(2, 0, 1)  # (H, W, C) -> (C, H, W)
-            a = outputs.get('visibility', torch.ones(H, W, device=device))
-            d = torch.zeros(H, W, device=device)  # Depth not computed by fast renderer
-        else:
-            img, a, d = forward_splat(
-                xyz_t, model.t, model.scales, model.scale_t, model.opacity.squeeze(-1), model.rgb_sh,
-                dirs, active_sh_degree if args.sh_degree>0 else 0, K, R, tt, H, W, time, quat=model.quat, elliptical=True
-            )
+        img, a, d, used = _render_with_guard(xyz_t, dirs, K, R, tt, H, W, time, active_sh_degree)
+        if not torch.isfinite(img).all():
+            print(f"\n❌ Non-finite image tensor right after rendering (mode={used}). Recovering…")
+            pruned = _prune_nonfinite_gaussians(model)
+            new_lr = _reduce_lr(optim, factor=0.5)
+            print(f"   - Pruned invalid Gaussians: {pruned}")
+            print(f"   - Reduced learning rate to: {new_lr:.2e}")
+            optim.zero_grad(set_to_none=True)
+            continue
 
         # Losses
         L_l1 = l1_loss(img, gt)
