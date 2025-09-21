@@ -133,10 +133,18 @@ def forward_splat(
             fx = K[0,0]; fy = K[1,1]
             J = torch.tensor([[fx/zx, 0.0, -fx*x/(zx*zx)],
                               [0.0, fy/zx, -fy*y/(zx*zx)]], device=device, dtype=xyz.dtype)
-            Sigma_img = J @ Sigma3D[idx] @ J.transpose(0,1) + 1e-6*torch.eye(2, device=device, dtype=xyz.dtype)
-            # Determine bbox via eigenvalues
-            eigvals, _ = torch.linalg.eigh(Sigma_img)
-            sigma_max = torch.sqrt(torch.clamp(eigvals.max(), min=1e-8))
+            # Image-space covariance, symmetrize and regularize
+            Sigma_img = J @ Sigma3D[idx] @ J.transpose(0,1)
+            Sigma_img = 0.5 * (Sigma_img + Sigma_img.transpose(0,1))
+            Sigma_img = Sigma_img + 1e-8*torch.eye(2, device=device, dtype=xyz.dtype)
+            # Determine bbox via eigenvalues (robust)
+            try:
+                eigvals, _ = torch.linalg.eigh(Sigma_img)
+                sigma_max = torch.sqrt(torch.clamp(eigvals.max(), min=1e-12))
+            except RuntimeError:
+                # Fallback: use diagonal upper bound if eigh fails
+                diag = torch.diagonal(Sigma_img, 0)
+                sigma_max = torch.sqrt(torch.clamp(diag.max(), min=1e-12))
             r = torch.clamp(3.0 * sigma_max, min=1.0, max=40.0)  # 3-sigma box
             u0 = int(torch.floor(u - r).item()); v0 = int(torch.floor(v - r).item())
             u1 = int(torch.ceil(u + r).item()); v1 = int(torch.ceil(v + r).item())
@@ -147,9 +155,10 @@ def forward_splat(
             xs_loc = torch.arange(uu0, uu1 + 1, device=device).float()
             gy, gx = torch.meshgrid(ys_loc, xs_loc, indexing='ij')
             d = torch.stack([gx - u, gy - v], dim=-1)  # [h,w,2]
-            # inv Sigma_img
+            # inv Sigma_img (robust determinant)
             a11 = Sigma_img[0,0]; a12 = Sigma_img[0,1]; a22 = Sigma_img[1,1]
-            det = a11*a22 - a12*a12 + 1e-8
+            det = a11*a22 - a12*a12
+            det = torch.where(det.abs() < 1e-12, det.sign()*1e-12 + 1e-12, det)
             i11 = a22/det; i22 = a11/det; i12 = -a12/det
             # mahalanobis distance
             dx = d[...,0]; dy = d[...,1]
