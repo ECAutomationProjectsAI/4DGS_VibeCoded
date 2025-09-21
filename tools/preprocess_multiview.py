@@ -534,7 +534,23 @@ class MultiViewPreprocessor:
             if colmap_success:
                 # Parse COLMAP output and generate transforms (use name_map to match files)
                 colmap_data = self.parse_colmap_output()
+                # Dump COLMAP parsed data for debugging
+                with open(self.colmap_dir / "colmap_parsed.json", 'w') as f:
+                    json.dump(colmap_data, f, indent=2)
                 transforms = self.generate_transforms_json(colmap_data, frame_metadata, name_map=name_map)
+                
+                # Validate calibrated frames
+                n_calibrated = len(transforms.get('frames', []))
+                logger.info(f"COLMAP produced {n_calibrated} calibrated frames")
+                if n_calibrated == 0:
+                    logger.error("❌ No calibrated frames found after COLMAP! Aborting.")
+                    logger.error("Troubleshooting tips:")
+                    logger.error("  - Verify extracted_frames/ contains images for all cameras in the selected range")
+                    logger.error("  - Verify frames_mapped/ has at least one frame group with all cameras")
+                    logger.error("  - Increase --colmap_mapped_groups (e.g., 5 or 10)")
+                    logger.error("  - Ensure start/end frame range is correct and not empty")
+                    logger.error("  - Check colmap/logs/*.log for errors")
+                    raise RuntimeError("COLMAP returned zero calibrated frames")
                 
                 # Save transforms.json
                 transforms_path = self.output_dir / "transforms.json"
@@ -572,7 +588,8 @@ class MultiViewPreprocessor:
             with open(transforms_path, 'w') as f:
                 json.dump(transforms, f, indent=2)
             
-            logger.info(f"✅ Saved transforms.json to {transforms_path}")
+            n_fallback = len(transforms.get('frames', []))
+            logger.info(f"✅ Saved fallback transforms.json with {n_fallback} frames to {transforms_path}")
         
         # Save processing metadata
         metadata = {
