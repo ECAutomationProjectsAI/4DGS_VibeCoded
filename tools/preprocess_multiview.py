@@ -46,7 +46,8 @@ class MultiViewPreprocessor:
                  colmap_max_image_size: int = 0,
                  colmap_max_num_features: int = 0,
                  colmap_matcher: str = "auto",
-                 colmap_sample_rate: int = 10):
+                 colmap_sample_rate: int = 10,
+                 colmap_mapped_groups: int = 3):
         """
         Initialize preprocessor.
         
@@ -69,6 +70,7 @@ class MultiViewPreprocessor:
         self.colmap_max_num_features = int(colmap_max_num_features) if colmap_max_num_features is not None else 0
         self.colmap_matcher = colmap_matcher
         self.colmap_sample_rate = max(1, int(colmap_sample_rate))
+        self.colmap_mapped_groups = max(1, int(colmap_mapped_groups))
         
         # Subdirectories
         self.frames_dir = self.output_dir / "frames"
@@ -494,12 +496,12 @@ class MultiViewPreprocessor:
             colmap_images_dir = self.colmap_dir / "images"
             colmap_images_dir.mkdir(parents=True, exist_ok=True)
             copied = 0
-            for group_dir in sorted(frames_mapped_dir.glob("frame*"))[:3]:
+            for group_dir in sorted(frames_mapped_dir.glob("frame*"))[: self.colmap_mapped_groups ]:
                 for img in group_dir.glob("*.jpg"):
                     dst = colmap_images_dir / f"{group_dir.name}_{img.name}"
                     shutil.copy2(img, dst)
                     copied += 1
-            logger.info(f"Prepared {copied} images for COLMAP from first 3 mapped frames")
+            logger.info(f"Prepared {copied} images for COLMAP from first {self.colmap_mapped_groups} mapped frames")
 
             logger.info("\nRunning COLMAP for multi-view calibration...")
             colmap_success = self.run_colmap_sfm(
@@ -832,6 +834,7 @@ def main():
                        help='Use GPU acceleration for video preprocessing (not COLMAP)')
     # COLMAP controls (kept minimal)
     parser.add_argument('--skip_colmap', action='store_true', help='Skip running COLMAP')
+    parser.add_argument('--colmap_mapped_groups', type=int, default=3, help='Number of mapped frame groups to use for COLMAP subset (default: 3)')
     
     args = parser.parse_args()
     
@@ -839,7 +842,8 @@ def main():
     preprocessor = MultiViewPreprocessor(
         output_dir=args.output,
         use_gpu=args.use_gpu,
-        skip_colmap=args.skip_colmap
+        skip_colmap=args.skip_colmap,
+        colmap_mapped_groups=args.colmap_mapped_groups
     )
     
     # Handle folder input
