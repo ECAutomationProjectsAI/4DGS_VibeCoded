@@ -27,6 +27,50 @@ def seed_everything(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
+def _reduce_lr(optim, factor=0.5, min_lr=1e-5):
+    for g in optim.param_groups:
+        new_lr = max(min_lr, g['lr'] * factor)
+        g['lr'] = new_lr
+    return optim.param_groups[0]['lr']
+
+
+def _prune_nonfinite_gaussians(model) -> int:
+    """Remove Gaussians with non-finite parameters or invalid scales."""
+    p = model.primitive
+    tensors = [p._xyz, p._vel, p._t, p._log_scale, p._log_scale_t, p._quat, p._omega_t, p._opacity, p._rgb_sh]
+    # Build keep mask across all tensors
+    keep_masks = []
+    for t in tensors:
+        if t is None:
+            continue
+        km = torch.isfinite(t)
+        # Reduce over parameter dims
+        km = km.view(km.shape[0], -1).all(dim=1)
+        keep_masks.append(km)
+    if not keep_masks:
+        return 0
+    keep = torch.stack(keep_masks, dim=0).all(dim=0)
+    # Also enforce positive scales after exp: log_scale/log_scale_t finite is enough; clamp raw logs to reasonable range
+    p._log_scale.data.clamp_(-6.0, 2.0)
+    p._log_scale_t.data.clamp_(-8.0, 2.0)
+    # Re-normalize quaternions to avoid drift
+    p._quat.data = p._quat.data / (p._quat.data.norm(dim=-1, keepdim=True) + 1e-8)
+    # Prune if needed
+    removed = int((~keep).sum().item())
+    if removed > 0:
+        model.prune(keep)
+    return removed
+
+
+def _nan_inf_found(*tensors) -> bool:
+    for t in tensors:
+        if t is None:
+            continue
+        if not torch.isfinite(t).all():
+            return True
+    return False
+
+
 def get_available_memory():
     """Get available system and GPU memory."""
     import psutil
@@ -352,6 +396,17 @@ def main():
         L_ssim = 1.0 - ssim(img, gt)
         loss = (1.0 - args.w_ssim) * L_l1 + args.w_ssim * L_ssim
 
+        # NaN/Inf watchdog before backward
+        if _nan_inf_found(loss, img, model.xyz, model.scales, model.opacity):
+            print(f"\n❌ Detected non-finite values at iter {it}. Engaging recovery…")
+            pruned = _prune_nonfinite_gaussians(model)
+            new_lr = _reduce_lr(optim, factor=0.5)
+            print(f"   - Pruned invalid Gaussians: {pruned}")
+            print(f"   - Reduced learning rate to: {new_lr:.2e}")
+            # Skip this iteration safely
+            optim.zero_grad(set_to_none=True)
+            continue
+
         if mk is not None and args.w_opa_mask > 0:
             sky = (1.0 - (mk>0.5).float())  # 1 for background
             o = a.clamp(1e-6, 1-1e-6)
@@ -391,7 +446,15 @@ def main():
                         print(f"\n⚠️ WARNING: Skipping temporal loss due to memory constraints")
                         L_temporal = 0.0
 
-        # Backprop
+        # Backprop (guard)
+        if not torch.isfinite(loss):
+            print(f"\n❌ Non-finite loss at iter {it}. Skipping backward and recovering…")
+            pruned = _prune_nonfinite_gaussians(model)
+            new_lr = _reduce_lr(optim, factor=0.5)
+            print(f"   - Pruned invalid Gaussians: {pruned}")
+            print(f"   - Reduced learning rate to: {new_lr:.2e}")
+            optim.zero_grad(set_to_none=True)
+            continue
         loss.backward()
 
         # Densify and prune
