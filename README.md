@@ -242,11 +242,11 @@ dataset/
 
 ### Quick Start (RunPod/Ubuntu)
 
-- Create a dataset from a single video (resized) and train with safe warmup and fast renderer:
+- Create a dataset from a folder of videos (resized) and train with safe warmup and fast renderer:
 
 ```bash
-# 1) Preprocess (single video)
-python3 tools/preprocess_video.py /workspace/videos/input.mp4 -o /workspace/dataset --resize 1280 720 --extract-every 1
+# 1) Preprocess (folder of videos)
+python3 tools/preprocess_video.py /workspace/videos -o /workspace/dataset --resize 1280 720 --extract-every 1
 
 # 2) Train (fast CUDA renderer + memory-safe warmup)
 python3 tools/train.py \
@@ -261,14 +261,13 @@ python3 tools/train.py \
   --w_temporal 0.01
 ```
 
-- Multi-view preprocessing and training:
+- Multi-view preprocessing and training (cameras auto-named from filenames):
 
 ```bash
-# 1) Preprocess (multi-view, provide camera names)
+# 1) Preprocess (multi-view from folder)
 python3 tools/preprocess_video.py \
-  /workspace/videos/cam0.mp4 /workspace/videos/cam1.mp4 /workspace/videos/cam2.mp4 \
+  /workspace/videos \
   -o /workspace/dataset \
-  --camera-names cam0 cam1 cam2 \
   --resize 1920 1080
 
 # 2) Train (larger scenes: stronger warmup)
@@ -298,7 +297,7 @@ Key options:
 - --resize W H: Downscale frames to reduce GPU memory use during training.
 - --start/--end: Trim the time range for quicker experiments.
 - --extract-every K: Subsample frames to reduce temporal density.
-- --camera-names: Provide names for multi-video inputs to map each stream to cam folders.
+- Folder-only input: Provide a directory with videos; camera names are derived from filenames.
 - --skip_colmap: Skip COLMAP if it is not available; simple poses will be generated.
 
 #### Multi-View Video Processing (Recommended)
@@ -318,39 +317,13 @@ python3 tools/preprocess_multiview.py \
     # --skip_colmap
 ```
 
-#### Alternative: Process Individual Videos
+#### Folder-based examples
 ```bash
-# Specify individual video files with custom camera names
-python3 tools/preprocess_multiview.py \
-    --videos /workspace/vid1.mp4 /workspace/vid2.mp4 \
-    --camera_names cam0 cam1 \
-    --output /workspace/processed_data
-```
+# Preprocess a folder of videos at 1280x720 and every frame
+python3 tools/preprocess_video.py /workspace/videos -o /workspace/dataset --resize 1280 720 --extract-every 1
 
-
-#### Example B: Multi-Camera Setup (Recommended)
-```bash
-# 4-camera setup for good results
-python tools/preprocess_video.py \
-    front.mp4 left.mp4 right.mp4 back.mp4 \
-    -o dataset/ \
-    --camera-names front left right back \
-    --sync-offsets 0.0 0.0 0.0 0.0  # Adjust if cameras aren't synchronized
-
-# 8-camera setup for best results
-python tools/preprocess_video.py \
-    cam0.mp4 cam1.mp4 cam2.mp4 cam3.mp4 \
-    cam4.mp4 cam5.mp4 cam6.mp4 cam7.mp4 \
-    -o dataset/ \
-    --resize 1920 1080
-```
-
-#### Example C: With Background Preprocessing
-```bash
-# If you have green screen footage, consider masking first
-# (requires external tools or manual preprocessing)
-python tools/preprocess_video.py masked_video.mp4 -o dataset/ \
-    --start 10 --end 30           # Extract specific time range
+# After masking backgrounds, place masked videos in a folder and preprocess
+python3 tools/preprocess_video.py /workspace/videos_masked -o /workspace/dataset_masked --resize 1920 1080
 ```
 
 ### Training Stage
