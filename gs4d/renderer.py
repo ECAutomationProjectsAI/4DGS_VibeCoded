@@ -82,10 +82,6 @@ def forward_splat(
     fy = K[1, 1]
     r_pix = 0.5 * (fx * sx / z + fy * sy / z)  # [N]
 
-    # Prepare full-frame coordinate grid
-    ys = torch.arange(0, H, device=device).float()
-    xs = torch.arange(0, W, device=device).float()
-    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')  # [H,W]
 
     # Init outputs
     image = torch.zeros(3, H, W, device=device)
@@ -115,15 +111,28 @@ def forward_splat(
         a = torch.clamp(opacity[idx], 0.0, 1.0) * w_t[idx]
         if not elliptical or quat is None:
             r = torch.clamp(r_pix[idx], min=1.0, max=20.0)
-            du = grid_x - u
-            dv = grid_y - v
+            # Local patch bounding box
+            u0 = int(torch.floor(u - r).item()); v0 = int(torch.floor(v - r).item())
+            u1 = int(torch.ceil(u + r).item());  v1 = int(torch.ceil(v + r).item())
+            if u1 < 0 or v1 < 0 or u0 >= W or v0 >= H:
+                continue
+            uu0 = max(0, u0); vv0 = max(0, v0); uu1 = min(W - 1, u1); vv1 = min(H - 1, v1)
+            ys_loc = torch.arange(vv0, vv1 + 1, device=device, dtype=xyz.dtype)
+            xs_loc = torch.arange(uu0, uu1 + 1, device=device, dtype=xyz.dtype)
+            gy, gx = torch.meshgrid(ys_loc, xs_loc, indexing='ij')  # [h,w]
+            du = gx - u
+            dv = gy - v
             s2 = (r * 0.5) ** 2
-            w = torch.exp(-0.5 * (du * du + dv * dv) / (s2 + 1e-8)) * a  # [H,W]
-            one_minus_A = (1.0 - alpha)
-            image = image + (one_minus_A * w[None]) * rgb[idx][:, None, None]
-            alpha_new = alpha + one_minus_A * w[None]
-            depth = (depth * alpha + z[idx] * (one_minus_A * w[None])) / (alpha_new + 1e-8)
-            alpha = alpha_new
+            w = torch.exp(-0.5 * (du * du + dv * dv) / (s2 + 1e-8)) * a  # [h,w]
+            # Compose on the local patch
+            patch_A = alpha[0, vv0:vv1+1, uu0:uu1+1]
+            one_minus_A = (1.0 - patch_A)
+            new_img_patch = image[:, vv0:vv1+1, uu0:uu1+1] + (one_minus_A * w)[None] * rgb[idx][:, None, None]
+            new_A_patch = patch_A + one_minus_A * w
+            new_D_patch = (depth[0, vv0:vv1+1, uu0:uu1+1] * patch_A + z[idx] * (one_minus_A * w)) / (new_A_patch + 1e-8)
+            image[:, vv0:vv1+1, uu0:uu1+1] = new_img_patch
+            alpha[0, vv0:vv1+1, uu0:uu1+1] = new_A_patch
+            depth[0, vv0:vv1+1, uu0:uu1+1] = new_D_patch
         else:
             # Elliptical footprint via first-order projection
             # Jacobian J at point

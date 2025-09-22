@@ -3,6 +3,8 @@ import sys
 import json
 import math
 import argparse
+# Reduce CUDA memory fragmentation during long-running splat loops
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch
 import numpy as np
 from tqdm import tqdm
