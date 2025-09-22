@@ -842,40 +842,30 @@ def look_at_matrix(eye, center, up):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Preprocess multi-view videos for 4D Gaussian Splatting training',
+        description='Preprocess multi-view videos (folder-only) for 4D Gaussian Splatting training',
         formatter_class=argparse.RawTextHelpFormatter
     )
-    
-    # Input options - either folder or individual videos
-    input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument('--video_folder', '-f', type=str,
-                           help='Path to folder containing video files\n(Uses video filenames as camera names)')
-    input_group.add_argument('--videos', '-v', nargs='+', type=str, 
-                           help='Individual video file paths')
-    
-    parser.add_argument('--output', '-o', type=str, required=True,
-                       help='Output directory')
-    parser.add_argument('--camera_names', nargs='+', default=None,
-                       help='Camera names for --videos option\n(For --video_folder, filenames are used automatically)')
-    parser.add_argument('--calibration', type=str, default=None,
-                       help='Pre-computed calibration file')
-    # Strict frame index selection (required behavior if provided)
-    parser.add_argument('--start_frame', type=int, default=0,
-                       help='Start frame index (inclusive). If set, only frames within [start_frame, end_frame) are processed.')
-    parser.add_argument('--end_frame', type=int, default=None,
-                       help='End frame index (exclusive). If set, only frames within [start_frame, end_frame) are processed.')
-    
-    # Keep only core options necessary for reproducibility
-    parser.add_argument('--resize', nargs=2, type=int, metavar=('WIDTH', 'HEIGHT'),
-                       help='Resize frames to WIDTH HEIGHT (e.g., 1920 1080)')
-    parser.add_argument('--use_gpu', action='store_true',
-                       help='Use GPU acceleration for video preprocessing (not COLMAP)')
+
+    # Folder-only input
+    parser.add_argument('input_dir', type=str, help='Path to folder containing video files (camera names derived from filenames)')
+    parser.add_argument('--output', '-o', type=str, required=True, help='Output directory')
+    parser.add_argument('--calibration', type=str, default=None, help='Pre-computed calibration file (optional)')
+
+    # Strict frame index selection
+    parser.add_argument('--start_frame', type=int, default=0, help='Start frame index (inclusive)')
+    parser.add_argument('--end_frame', type=int, default=None, help='End frame index (exclusive)')
+
+    # Core options
+    parser.add_argument('--resize', nargs=2, type=int, metavar=('WIDTH', 'HEIGHT'), help='Resize frames to WIDTH HEIGHT (e.g., 1920 1080)')
+    parser.add_argument('--extract-every', type=int, default=1, help='Extract every Nth frame (default: 1 = every frame)')
+    parser.add_argument('--use_gpu', action='store_true', help='Use GPU acceleration for video preprocessing (not COLMAP)')
+
     # COLMAP controls (kept minimal)
     parser.add_argument('--skip_colmap', action='store_true', help='Skip running COLMAP')
     parser.add_argument('--colmap_mapped_groups', type=int, default=3, help='Number of mapped frame groups to use for COLMAP subset (default: 3)')
-    
+
     args = parser.parse_args()
-    
+
     # Initialize preprocessor
     preprocessor = MultiViewPreprocessor(
         output_dir=args.output,
@@ -883,70 +873,37 @@ def main():
         skip_colmap=args.skip_colmap,
         colmap_mapped_groups=args.colmap_mapped_groups
     )
-    
-    # Handle folder input
-    if args.video_folder:
-        logger.info(f"Processing all videos in folder: {args.video_folder}")
-        
-        resize_tuple = tuple(args.resize) if args.resize else None
-        result = preprocessor.process_video_folder(
-            video_folder=args.video_folder,
-            output_dir=args.output,
-            fps=30,
-            skip_frames=1,
-            resize=resize_tuple,
-            start_frame=args.start_frame,
-            end_frame=args.end_frame
-        )
-        
-        if result['success']:
-            print("\n" + "="*60)
-            print("✅ PREPROCESSING COMPLETE")
-            print("="*60)
-            print(f"Cameras processed: {result['num_cameras']}")
-            print(f"Total frames: {result['total_frames']}")
-            print(f"Output directory: {result['output_dir']}")
-            print("\nNext step:")
-            print(f"  python tools/train.py --data_root {result['output_dir']} --out_dir model/")
-        else:
-            logger.error("Preprocessing failed")
-            sys.exit(1)
-    
-    # Handle individual video files
+
+    # Validate input
+    if not os.path.isdir(args.input_dir):
+        logger.error(f"Input must be a directory of videos: {args.input_dir}")
+        sys.exit(1)
+
+    logger.info(f"Processing all videos in folder: {args.input_dir}")
+
+    resize_tuple = tuple(args.resize) if args.resize else None
+    result = preprocessor.process_video_folder(
+        video_folder=args.input_dir,
+        output_dir=args.output,
+        fps=30,
+        skip_frames=args.extract_every,
+        resize=resize_tuple,
+        start_frame=args.start_frame,
+        end_frame=args.end_frame
+    )
+
+    if result['success']:
+        print("\n" + "="*60)
+        print("✅ PREPROCESSING COMPLETE")
+        print("="*60)
+        print(f"Cameras processed: {result['num_cameras']}")
+        print(f"Total frames: {result['total_frames']}")
+        print(f"Output directory: {result['output_dir']}")
+        print("\nNext step:")
+        print(f"  python tools/train.py --data_root {result['output_dir']} --out_dir model/")
     else:
-        # Validate inputs
-        for video in args.videos:
-            if not os.path.exists(video):
-                logger.error(f"Video file not found: {video}")
-                sys.exit(1)
-        
-        # Use filenames as camera names if not provided
-        if args.camera_names is None:
-            args.camera_names = [Path(v).stem for v in args.videos]
-            logger.info(f"Using video filenames as camera names: {args.camera_names}")
-        elif len(args.camera_names) != len(args.videos):
-            logger.error(f"Number of camera names ({len(args.camera_names)}) must match videos ({len(args.videos)})")
-            sys.exit(1)
-        
-        # Process individual videos
-        result = preprocessor.process_videos(
-            video_paths=args.videos,
-            camera_names=args.camera_names,
-            calibration_file=args.calibration,
-            target_fps=30,
-            extract_every_n=1,
-            max_frames=-1,
-            start_frame=args.start_frame,
-            end_frame=args.end_frame
-        )
-        
-        if result:
-            print("\n" + "="*60)
-            print("✅ PREPROCESSING COMPLETE")
-            print("="*60)
-            print(f"Output directory: {result['output_dir']}")
-            print("\nNext step:")
-            print(f"  python tools/train.py --data_root {result['output_dir']} --out_dir model/")
+        logger.error("Preprocessing failed")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

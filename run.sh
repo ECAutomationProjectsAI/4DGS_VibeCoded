@@ -22,7 +22,7 @@ if [ $# -eq 0 ]; then
     echo "Usage: bash run_runpod.sh <script> [arguments]"
     echo ""
     echo "Examples:"
-    echo "  bash run_runpod.sh tools/preprocess_video.py /videos -o /data"
+    echo "  bash run_runpod.sh tools/preprocess_multiview.py /videos -o /data"
     echo "  bash run_runpod.sh tools/train.py --data_root /data --out_dir /model"
     echo "  bash run_runpod.sh tools/render.py --ckpt /model/final.pt --out_dir /renders"
     exit 1
