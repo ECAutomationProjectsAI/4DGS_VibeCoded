@@ -129,6 +129,7 @@ def main():
     parser.add_argument('--densify_topk_ratio', type=float, default=0.05, help='Top-k ratio of grad to clone at each densify step')
     # SH growth
     parser.add_argument('--sh_increase_interval', type=int, default=1000)
+    parser.add_argument('--warmup_iters', type=int, default=500, help='Iterations to warm up with extra-stable settings')
 
     args = parser.parse_args()
     
@@ -365,8 +366,15 @@ def main():
         if nan_mask.any():
             p._rgb_sh.data[nan_mask] = 0.0
 
-    def _render_with_guard(xyz_t, dirs, K, R, tt, H, W, time, active_sh_degree):
-        # Try fast renderer first
+    def _render_with_guard(xyz_t, dirs, K, R, tt, H, W, time, active_sh_degree, it):
+        # During warmup, force the most stable naive mode (circular, no ellipse)
+        if it <= args.warmup_iters:
+            img_w, a_w, d_w = forward_splat(
+                xyz_t, model.t, model.scales, model.scale_t, model.opacity.squeeze(-1), model.rgb_sh,
+                dirs, 0, K, R, tt, H, W, time, quat=model.quat, elliptical=False
+            )
+            return img_w, a_w, d_w, 'warmup-naive'
+        # Try fast renderer first after warmup
         if args.renderer == 'fast':
             try:
                 outputs = renderer(
@@ -388,10 +396,10 @@ def main():
                     print("\n⚠️ Fast renderer produced non-finite values; falling back to naive for this iter")
             except Exception as e:
                 print(f"\n⚠️ Fast renderer exception: {e}. Falling back to naive for this iter")
-        # Naive fallback (elliptical on)
+        # Naive fallback: start circular; if stable later we can enable elliptical automatically
         img_n, a_n, d_n = forward_splat(
             xyz_t, model.t, model.scales, model.scale_t, model.opacity.squeeze(-1), model.rgb_sh,
-            dirs, active_sh_degree if args.sh_degree>0 else 0, K, R, tt, H, W, time, quat=model.quat, elliptical=True
+            dirs, active_sh_degree if args.sh_degree>0 else 0, K, R, tt, H, W, time, quat=model.quat, elliptical=False
         )
         return img_n, a_n, d_n, 'naive'
 
@@ -415,7 +423,7 @@ def main():
 
         # Use time-dependent positions x(t) = x + v * t
         xyz_t = model.position_at_time(time)
-        img, a, d, used = _render_with_guard(xyz_t, dirs, K, R, tt, H, W, time, active_sh_degree)
+        img, a, d, used = _render_with_guard(xyz_t, dirs, K, R, tt, H, W, time, active_sh_degree, it)
         if not torch.isfinite(img).all():
             print(f"\n❌ Non-finite image tensor right after rendering (mode={used}). Recovering…")
             pruned = _prune_nonfinite_gaussians(model)
@@ -425,10 +433,14 @@ def main():
             optim.zero_grad(set_to_none=True)
             continue
 
-        # Losses
+        # Losses (use L1-only during warmup)
         L_l1 = l1_loss(img, gt)
-        L_ssim = 1.0 - ssim(img, gt)
-        loss = (1.0 - args.w_ssim) * L_l1 + args.w_ssim * L_ssim
+        if it <= args.warmup_iters:
+            L_ssim = 0.0
+            loss = L_l1
+        else:
+            L_ssim = 1.0 - ssim(img, gt)
+            loss = (1.0 - args.w_ssim) * L_l1 + args.w_ssim * L_ssim
 
         # NaN/Inf watchdog before backward
         if _nan_inf_found(loss, img, model.xyz, model.scales, model.opacity):
@@ -448,7 +460,7 @@ def main():
             loss = loss + args.w_opa_mask * L_opa
         
         # Add temporal consistency loss
-        if args.w_temporal > 0 and F > 1:
+        if args.w_temporal > 0 and F > 1 and it > args.warmup_iters:
             # Disable temporal loss if too many points (to avoid OOM)
             if model.xyz.shape[0] > 50000:
                 # Skip temporal loss for large point clouds
@@ -504,7 +516,7 @@ def main():
             r_pix = 0.5 * (fx * model.scales[:,0] / z + fy * model.scales[:,1] / z)
             max_radii2D = torch.maximum(max_radii2D, r_pix)
 
-            if args.densify_from_iter <= it <= args.densify_until_iter and it % args.densification_interval == 0:
+            if it > args.warmup_iters and args.densify_from_iter <= it <= args.densify_until_iter and it % args.densification_interval == 0:
                 # Approximate visibility and accumulate gradient
                 x = Xc[:,0] / z; y = Xc[:,1] / z
                 uv = torch.stack([(K[0,0]*x + K[0,2]), (K[1,1]*y + K[1,2])], dim=-1)
@@ -583,7 +595,7 @@ def main():
                 })
 
         # SH growth
-        if args.sh_degree > 0 and it % args.sh_increase_interval == 0:
+        if args.sh_degree > 0 and it % args.sh_increase_interval == 0 and it > args.warmup_iters:
             active_sh_degree = min(args.sh_degree, active_sh_degree + 1)
 
         if it % args.save_every == 0:
