@@ -8,13 +8,8 @@ This is a production-ready implementation of 4D Gaussian Splatting (4DGS) with C
 
 ## Common Development Commands
 
-### Environment Setup
+### Environment Setup (Ubuntu/RunPod)
 ```bash
-# Windows PowerShell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# Linux/MacOS
 python3 -m venv venv
 source venv/bin/activate
 
@@ -26,19 +21,13 @@ pip install gsplat==0.1.11  # CUDA acceleration
 
 ### Core Workflow Commands
 
-#### 1. Process Video to Dataset
+#### 1. Process Videos (Folder) to Dataset
 ```bash
-# Single video
-python tools/preprocess_video.py video.mp4 -o dataset/
+# Folder of videos (auto camera names from filenames)
+python tools/preprocess_video.py videos/ -o dataset/ --resize 1280 720 --extract-every 1
 
-# Multiple synchronized cameras
-python tools/preprocess_video.py cam0.mp4 cam1.mp4 cam2.mp4 -o dataset/ --camera-names front left right
-
-# With time range and resize
-python tools/preprocess_video.py video.mp4 -o dataset/ --start 10 --end 30 --resize 1280 720
-
-# Extract fewer frames for testing
-python tools/preprocess_video.py video.mp4 -o dataset/ --extract-every 5
+# With time range and subsampling
+python tools/preprocess_video.py videos/ -o dataset/ --start_frame 0 --end_frame 2000 --extract-every 2
 ```
 
 #### 2. Train 4DGS Model
@@ -90,12 +79,13 @@ python -c "import gsplat; print('gsplat installed')"
 docker build -t gs4d:latest .
 
 # Run with GPU support
-docker run --gpus all -v $(pwd)/videos:/videos -v $(pwd)/output:/output gs4d:latest python3 /workspace/tools/preprocess_video.py /videos/input.mp4 -o /output/dataset/
+```bash
+docker run --gpus all -v $(pwd)/videos:/videos -v $(pwd)/output:/output gs4d:latest \
+  python3 /workspace/tools/preprocess_video.py /videos -o /output/dataset/
 
 # Docker Compose
 docker-compose up
 ```
-
 ## Code Architecture
 
 ### Core Library Structure (`gs4d/`)

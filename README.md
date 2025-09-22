@@ -308,13 +308,11 @@ For best results, use synchronized multi-view capture similar to reference datas
 
 ```bash
 # Process all videos in a folder (RunPod optimized)
-python3 tools/preprocess_multiview.py \
-    --video_folder /workspace/videos \
-    --output /workspace/processed_data \
-    --fps 30 \
-    --use_gpu  # GPU acceleration for COLMAP
-    # If COLMAP is unavailable, add:
-    # --skip_colmap
+python3 tools/preprocess_video.py \
+    /workspace/videos \
+    -o /workspace/processed_data \
+    --resize 1280 720 \
+    --extract-every 1
 ```
 
 #### Folder-based examples

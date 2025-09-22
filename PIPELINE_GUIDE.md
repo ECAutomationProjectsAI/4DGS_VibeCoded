@@ -35,16 +35,15 @@ Multi-View Videos → Frame Extraction → Camera Calibration → 4DGS Training 
 
 ### 2. Preprocessing Pipeline
 
-#### Step 2.1: Multi-View Video Processing
+#### Step 2.1: Multi-View Video Processing (Folder)
 
 ```bash
-python tools/preprocess_multiview.py \
-    --videos video1.mp4 video2.mp4 video3.mp4 video4.mp4 \
-    --output processed_data \
-    --camera_names cam0 cam1 cam2 cam3 \
-    --fps 30 \
-    --skip_frames 1 \
-    --use_gpu
+python tools/preprocess_video.py \
+    data/videos \
+    -o processed_data \
+    --resize 1920 1080 \
+    --extract-every 1 \
+    --use-gpu
 ```
 
 **What happens:**
@@ -299,11 +298,13 @@ Rendered frames as image sequence or video file:
 ## Example End-to-End Pipeline
 
 ```bash
-# 1. Preprocess videos
-python tools/preprocess_multiview.py \
-    --videos data/cam*.mp4 \
-    --output processed \
-    --use_gpu
+# 1. Preprocess videos (folder)
+python tools/preprocess_video.py \
+    data/videos \
+    -o processed \
+    --resize 1280 720 \
+    --extract-every 1 \
+    --use-gpu
 
 # 2. Train model
 python tools/train.py \
