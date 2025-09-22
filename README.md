@@ -240,7 +240,66 @@ dataset/
 
 ## Complete Training Pipeline
 
+### Quick Start (Windows PowerShell)
+
+- Create a dataset from a single video (resized) and train with safe warmup and fast renderer:
+
+```powershell
+# 1) Preprocess (single video)
+python .\tools\preprocess_video.py .\videos\input.mp4 -o .\dataset --resize 1280 720 --extract-every 1
+
+# 2) Train (fast CUDA renderer + memory-safe warmup)
+python .\tools\train.py \
+  --data_root .\dataset \
+  --out_dir .\outputs\exp \
+  --renderer fast \
+  --iters 30000 \
+  --sh_degree 3 \
+  --warmup_iters 500 \
+  --warmup_points 200000 \
+  --warmup_downscale 2 \
+  --w_temporal 0.01
+```
+
+- Multi-view preprocessing and training:
+
+```powershell
+# 1) Preprocess (multi-view, provide camera names)
+python .\tools\preprocess_video.py \
+  .\videos\cam0.mp4 .\videos\cam1.mp4 .\videos\cam2.mp4 \
+  -o .\dataset \
+  --camera-names cam0 cam1 cam2 \
+  --resize 1920 1080
+
+# 2) Train (larger scenes: stronger warmup)
+python .\tools\train.py \
+  --data_root .\dataset \
+  --out_dir .\outputs\exp_multiview \
+  --renderer fast \
+  --iters 50000 \
+  --sh_degree 3 \
+  --warmup_iters 1000 \
+  --warmup_points 100000 \
+  --warmup_downscale 4 \
+  --w_temporal 0.02
+```
+
+Tip: If you run other entry points or older scripts outside this repo, you may optionally set the CUDA allocator for lower fragmentation:
+
+```powershell
+$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+```
+
 ### Data Preprocessing Stage
+
+The preprocessing scripts turn videos into a frames/ directory and produce camera intrinsics/extrinsics in transforms.json.
+
+Key options:
+- --resize W H: Downscale frames to reduce GPU memory use during training.
+- --start/--end: Trim the time range for quicker experiments.
+- --extract-every K: Subsample frames to reduce temporal density.
+- --camera-names: Provide names for multi-video inputs to map each stream to cam folders.
+- --skip_colmap: Skip COLMAP if it is not available; simple poses will be generated.
 
 #### Multi-View Video Processing (Recommended)
 For best results, use synchronized multi-view capture similar to reference datasets:
@@ -266,6 +325,18 @@ python3 tools/preprocess_multiview.py \
     --videos /workspace/vid1.mp4 /workspace/vid2.mp4 \
     --camera_names cam0 cam1 \
     --output /workspace/processed_data
+```
+
+#### Windows examples
+```powershell
+# Single video, resize to 1280x720 for faster training
+python .\tools\preprocess_video.py .\videos\input.mp4 -o .\dataset --resize 1280 720
+
+# Multiple videos with named cameras
+python .\tools\preprocess_video.py .\videos\front.mp4 .\videos\left.mp4 .\videos\right.mp4 -o .\dataset --camera-names front left right --resize 1920 1080
+
+# Subsample frames to every 2nd frame and clip time range
+python .\tools\preprocess_video.py .\videos\input.mp4 -o .\dataset --extract-every 2 --start 10 --end 30
 
 #### Example B: Multi-Camera Setup (Recommended)
 ```bash
@@ -294,6 +365,19 @@ python tools/preprocess_video.py masked_video.mp4 -o dataset/ \
 
 ### Training Stage
 
+New in this repo: a memory-safe warmup and a naive/fast renderer guard.
+- Warmup renders with fewer points and optional downscale to stabilize early training and reduce peak VRAM.
+- The fast renderer uses CUDA (via gsplat) when available; the system falls back to the naive renderer if needed.
+
+Warmup controls (arguments to tools/train.py):
+- --warmup_iters N: Number of early iterations using the warmup mode (default 500)
+- --warmup_points P: Cap active points during warmup (default 200000)
+- --warmup_downscale S: Render at 1/S resolution during warmup (>=1)
+
+Recommended presets:
+- Small/medium scenes (<=100k points, 1080p): --warmup_iters 500 --warmup_points 200000 --warmup_downscale 2
+- Large scenes (>=100k points or >1080p): --warmup_iters 1000 --warmup_points 100000 --warmup_downscale 4
+
 #### Initialization Methods (Paper-Based)
 
 **SpacetimeGaussian/4DGS Approach**:
@@ -312,7 +396,7 @@ python tools/preprocess_video.py masked_video.mp4 -o dataset/ \
 #### Training Configuration
 
 ```bash
-# Standard training following paper configurations
+# Standard training following paper configurations + warmup
 python tools/train.py \
     --data_root processed_data \
     --out_dir outputs/exp \
@@ -321,6 +405,9 @@ python tools/train.py \
     --densify_grad_thresh 1e-3 # Gradient threshold for cloning
     --w_temporal 0.01          # Temporal consistency weight
     --renderer fast            # Use gsplat CUDA backend
+    --warmup_iters 500 \
+    --warmup_points 200000 \
+    --warmup_downscale 2
 
 # Advanced training with paper-specific techniques
 python tools/train.py \
@@ -333,7 +420,8 @@ python tools/train.py \
     --densification_interval 100 \
     --w_temporal 0.02          # Higher for smoother motion
     --temporal_window 3        # Frames for consistency
-    --renderer fast
+    --renderer fast \
+    --warmup_iters 1000 --warmup_points 100000 --warmup_downscale 4
 
 #### Basic Training Examples
 
@@ -341,12 +429,13 @@ python tools/train.py \
 # Simplest - full auto mode
 python tools/train.py --data_root dataset/ --out_dir model/
 
-# With some preferences
+# With warmup and CUDA renderer
 python tools/train.py \
     --data_root dataset/ \
     --out_dir model/ \
-    --renderer fast           # Use CUDA acceleration\
-    --w_temporal 0.01         # Temporal smoothness
+    --renderer fast           # Use CUDA acceleration \
+    --w_temporal 0.01         # Temporal smoothness \
+    --warmup_iters 500 --warmup_points 200000 --warmup_downscale 2
 
 # Override auto-detection if needed
 python tools/train.py \
@@ -396,6 +485,12 @@ python tools/render.py \
     --ckpt outputs/exp/ckpt_30000.pt \
     --out_dir renders/ \
     --renderer fast
+```
+
+#### Windows examples
+```powershell
+# Standard render (fast CUDA)
+python .\tools\render.py --data_root .\dataset --ckpt .\outputs\exp\model_final.pt --out_dir .\renders --renderer fast
 ```
 
 #### Export to Standard Formats
