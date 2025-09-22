@@ -553,21 +553,21 @@ class MultiViewPreprocessor:
                 n_calibrated = len(transforms.get('frames', []))
                 logger.info(f"COLMAP produced {n_calibrated} calibrated frames")
                 if n_calibrated == 0:
-                    logger.error("❌ No calibrated frames found after COLMAP! Aborting.")
+                    logger.error("❌ No calibrated frames found after COLMAP! Falling back to default transforms.")
                     logger.error("Troubleshooting tips:")
                     logger.error("  - Verify extracted_frames/ contains images for all cameras in the selected range")
                     logger.error("  - Verify frames_mapped/ has at least one frame group with all cameras")
                     logger.error("  - Increase --colmap_mapped_groups (e.g., 5 or 10)")
                     logger.error("  - Ensure start/end frame range is correct and not empty")
                     logger.error("  - Check colmap/logs/*.log for errors")
-                    raise RuntimeError("COLMAP returned zero calibrated frames")
-                
-                # Save transforms.json
-                transforms_path = self.output_dir / "transforms.json"
-                with open(transforms_path, 'w') as f:
-                    json.dump(transforms, f, indent=2)
-                
-                logger.info(f"✅ Saved transforms.json to {transforms_path}")
+                    colmap_success = False
+                else:
+                    # Save transforms.json
+                    transforms_path = self.output_dir / "transforms.json"
+                    with open(transforms_path, 'w') as f:
+                        json.dump(transforms, f, indent=2)
+                    
+                    logger.info(f"✅ Saved transforms.json to {transforms_path}")
             else:
                 logger.warning("COLMAP failed. You may need to provide manual calibration.")
         elif len(video_files) > 1 and self.skip_colmap:
