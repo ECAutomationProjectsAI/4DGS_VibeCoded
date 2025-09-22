@@ -137,6 +137,8 @@ def main():
     # SH growth
     parser.add_argument('--sh_increase_interval', type=int, default=1000)
     parser.add_argument('--warmup_iters', type=int, default=500, help='Iterations to warm up with extra-stable settings')
+    parser.add_argument('--warmup_points', type=int, default=200000, help='Max active points during warmup rendering')
+    parser.add_argument('--warmup_downscale', type=int, default=2, help='Render at 1/downscale resolution during warmup (>=1)')
 
     args = parser.parse_args()
     
@@ -400,12 +402,40 @@ def main():
             p._rgb_sh.data[nan_mask] = 0.0
 
     def _render_with_guard(xyz_t, dirs, K, R, tt, H, W, time, active_sh_degree, it):
-        # During warmup, force the most stable naive mode (circular, no ellipse)
+        # During warmup, force the most stable naive mode (circular) with subset and optional downscale
         if it <= args.warmup_iters:
-            img_w, a_w, d_w = forward_splat(
-                xyz_t, model.t, model.scales, model.scale_t, model.opacity.squeeze(-1), model.rgb_sh,
-                dirs, 0, K, R, tt, H, W, time, quat=model.quat, elliptical=False
-            )
+            N = xyz_t.shape[0]
+            use_N = min(N, args.warmup_points)
+            if use_N < N:
+                idxs = torch.randperm(N, device=xyz_t.device)[:use_N]
+                xyz_sel = xyz_t[idxs]
+                t_sel = model.t[idxs]
+                sc_sel = model.scales[idxs]
+                sct_sel = model.scale_t[idxs]
+                opa_sel = model.opacity.squeeze(-1)[idxs]
+                sh_sel = model.rgb_sh[idxs]
+                dir_sel = dirs[idxs]
+                quat_sel = model.quat[idxs]
+            else:
+                xyz_sel, t_sel, sc_sel, sct_sel, opa_sel, sh_sel, dir_sel, quat_sel = (
+                    xyz_t, model.t, model.scales, model.scale_t, model.opacity.squeeze(-1), model.rgb_sh, dirs, model.quat)
+            # Downscale rendering
+            ds = max(1, int(args.warmup_downscale))
+            if ds > 1:
+                Hs, Ws = max(8, H//ds), max(8, W//ds)
+                # Adjust intrinsics
+                K_s = K.clone()
+                K_s[0,0] /= ds; K_s[1,1] /= ds
+                K_s[0,2] /= ds; K_s[1,2] /= ds
+                img_w, a_w, d_w = forward_splat(
+                    xyz_sel, t_sel, sc_sel, sct_sel, opa_sel, sh_sel,
+                    dir_sel, 0, K_s, R, tt, Hs, Ws, time, quat=quat_sel, elliptical=False
+                )
+            else:
+                img_w, a_w, d_w = forward_splat(
+                    xyz_sel, t_sel, sc_sel, sct_sel, opa_sel, sh_sel,
+                    dir_sel, 0, K, R, tt, H, W, time, quat=quat_sel, elliptical=False
+                )
             return img_w, a_w, d_w, 'warmup-naive'
         # Try fast renderer first after warmup
         if args.renderer == 'fast':
@@ -466,8 +496,13 @@ def main():
             optim.zero_grad(set_to_none=True)
             continue
 
-        # Losses (use L1-only during warmup)
-        L_l1 = l1_loss(img, gt)
+        # Losses (use L1-only during warmup, matching resolution)
+        if it <= args.warmup_iters and args.warmup_downscale > 1:
+            Hs, Ws = img.shape[-2], img.shape[-1]
+            gt_small = torch.nn.functional.interpolate(gt[None], size=(Hs, Ws), mode='bilinear', align_corners=False)[0]
+            L_l1 = l1_loss(img, gt_small)
+        else:
+            L_l1 = l1_loss(img, gt)
         if it <= args.warmup_iters:
             L_ssim = 0.0
             loss = L_l1
