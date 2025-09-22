@@ -1,27 +1,13 @@
 #!/usr/bin/env python3
-"""Preprocess video sequences for 4D Gaussian Splatting training.
+"""Preprocess a folder of videos for 4D Gaussian Splatting training.
 
-Supports:
-- Single video from monocular camera
-- Multiple synchronized videos from different viewpoints
-- Directory of videos (automatic multi-camera setup)
-- Various video formats (mp4, avi, mov, mkv, etc.)
+- Input: a directory containing videos (mp4, mov, avi, mkv)
+- Cameras are auto-named using the video filenames (without extensions)
+- Outputs frames/ subfolders per camera and a transforms.json for training
 
-Usage examples:
-    # Single video
-    python preprocess_video.py video.mp4 output_dir/
-    
-    # Multiple camera videos
-    python preprocess_video.py cam0.mp4 cam1.mp4 cam2.mp4 -o output_dir/
-    
-    # Directory of videos
-    python preprocess_video.py video_folder/ -o output_dir/
-    
-    # With calibration
-    python preprocess_video.py video.mp4 -o output_dir/ --calibration calib.json
-    
-    # Extract subset and resize
-    python preprocess_video.py video.mp4 -o output_dir/ --start 10 --end 30 --resize 960 540
+Usage (RunPod/Ubuntu):
+    python3 tools/preprocess_video.py /workspace/videos -o /workspace/dataset \
+        --resize 1280 720 --extract-every 1
 """
 
 import os
@@ -45,24 +31,6 @@ from gs4d.video_processor import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
-def parse_calibration(calib_arg: str) -> dict:
-"""Preprocess video sequences for 4D Gaussian Splatting training.
-
-Only accepts a directory path containing videos. All videos in the folder are processed in sorted order.
-Each camera is named automatically from the video filename (without extension).
-
-Supported formats: mp4, mov, avi, mkv.
-
-Usage examples (RunPod/Ubuntu):
-    # Directory of videos
-    python3 tools/preprocess_video.py /workspace/videos -o /workspace/dataset \
-        --resize 1280 720 --extract-every 1
-
-    # With frame range
-    python3 tools/preprocess_video.py /workspace/videos -o /workspace/dataset \
-        --start_frame 0 --end_frame 1000
-"""
 
 def parse_calibration(calib_arg: str) -> dict:
     """Parse calibration argument (JSON file or string)."""
