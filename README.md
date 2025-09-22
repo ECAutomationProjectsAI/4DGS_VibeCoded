@@ -240,18 +240,18 @@ dataset/
 
 ## Complete Training Pipeline
 
-### Quick Start (Windows PowerShell)
+### Quick Start (RunPod/Ubuntu)
 
 - Create a dataset from a single video (resized) and train with safe warmup and fast renderer:
 
-```powershell
+```bash
 # 1) Preprocess (single video)
-python .\tools\preprocess_video.py .\videos\input.mp4 -o .\dataset --resize 1280 720 --extract-every 1
+python3 tools/preprocess_video.py /workspace/videos/input.mp4 -o /workspace/dataset --resize 1280 720 --extract-every 1
 
 # 2) Train (fast CUDA renderer + memory-safe warmup)
-python .\tools\train.py \
-  --data_root .\dataset \
-  --out_dir .\outputs\exp \
+python3 tools/train.py \
+  --data_root /workspace/dataset \
+  --out_dir /workspace/outputs/exp \
   --renderer fast \
   --iters 30000 \
   --sh_degree 3 \
@@ -263,18 +263,18 @@ python .\tools\train.py \
 
 - Multi-view preprocessing and training:
 
-```powershell
+```bash
 # 1) Preprocess (multi-view, provide camera names)
-python .\tools\preprocess_video.py \
-  .\videos\cam0.mp4 .\videos\cam1.mp4 .\videos\cam2.mp4 \
-  -o .\dataset \
+python3 tools/preprocess_video.py \
+  /workspace/videos/cam0.mp4 /workspace/videos/cam1.mp4 /workspace/videos/cam2.mp4 \
+  -o /workspace/dataset \
   --camera-names cam0 cam1 cam2 \
   --resize 1920 1080
 
 # 2) Train (larger scenes: stronger warmup)
-python .\tools\train.py \
-  --data_root .\dataset \
-  --out_dir .\outputs\exp_multiview \
+python3 tools/train.py \
+  --data_root /workspace/dataset \
+  --out_dir /workspace/outputs/exp_multiview \
   --renderer fast \
   --iters 50000 \
   --sh_degree 3 \
@@ -284,10 +284,10 @@ python .\tools\train.py \
   --w_temporal 0.02
 ```
 
-Tip: If you run other entry points or older scripts outside this repo, you may optionally set the CUDA allocator for lower fragmentation:
+Optional: If you run other entry points outside this repo, you may set the CUDA allocator to reduce fragmentation:
 
-```powershell
-$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ```
 
 ### Data Preprocessing Stage
@@ -327,16 +327,6 @@ python3 tools/preprocess_multiview.py \
     --output /workspace/processed_data
 ```
 
-#### Windows examples
-```powershell
-# Single video, resize to 1280x720 for faster training
-python .\tools\preprocess_video.py .\videos\input.mp4 -o .\dataset --resize 1280 720
-
-# Multiple videos with named cameras
-python .\tools\preprocess_video.py .\videos\front.mp4 .\videos\left.mp4 .\videos\right.mp4 -o .\dataset --camera-names front left right --resize 1920 1080
-
-# Subsample frames to every 2nd frame and clip time range
-python .\tools\preprocess_video.py .\videos\input.mp4 -o .\dataset --extract-every 2 --start 10 --end 30
 
 #### Example B: Multi-Camera Setup (Recommended)
 ```bash
@@ -487,11 +477,6 @@ python tools/render.py \
     --renderer fast
 ```
 
-#### Windows examples
-```powershell
-# Standard render (fast CUDA)
-python .\tools\render.py --data_root .\dataset --ckpt .\outputs\exp\model_final.pt --out_dir .\renders --renderer fast
-```
 
 #### Export to Standard Formats
 ```bash
