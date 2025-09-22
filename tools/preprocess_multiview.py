@@ -907,4 +907,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    print("This script has been merged into tools/preprocess.py. Please use:\n")
+    print("  python3 tools/preprocess.py /path/to/videos -o /path/to/dataset [--resize W H] [--extract-every N]\n")
+    sys.exit(1)

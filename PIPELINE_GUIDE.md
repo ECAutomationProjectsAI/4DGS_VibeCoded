@@ -38,7 +38,7 @@ Multi-View Videos → Frame Extraction → Camera Calibration → 4DGS Training 
 #### Step 2.1: Multi-View Video Processing (Folder)
 
 ```bash
-python tools/preprocess_video.py \
+python tools/preprocess.py \
     data/videos \
     -o processed_data \
     --resize 1920 1080 \
@@ -299,7 +299,7 @@ Rendered frames as image sequence or video file:
 
 ```bash
 # 1. Preprocess videos (folder)
-python tools/preprocess_video.py \
+python tools/preprocess.py \
     data/videos \
     -o processed \
     --resize 1280 720 \

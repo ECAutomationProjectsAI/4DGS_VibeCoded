@@ -246,7 +246,7 @@ dataset/
 
 ```bash
 # 1) Preprocess (folder of videos)
-python3 tools/preprocess_video.py /workspace/videos -o /workspace/dataset --resize 1280 720 --extract-every 1
+python3 tools/preprocess.py /workspace/videos -o /workspace/dataset --resize 1280 720 --extract-every 1
 
 # 2) Train (fast CUDA renderer + memory-safe warmup)
 python3 tools/train.py \
@@ -265,7 +265,7 @@ python3 tools/train.py \
 
 ```bash
 # 1) Preprocess (multi-view from folder)
-python3 tools/preprocess_video.py \
+python3 tools/preprocess.py \
   /workspace/videos \
   -o /workspace/dataset \
   --resize 1920 1080
@@ -308,7 +308,7 @@ For best results, use synchronized multi-view capture similar to reference datas
 
 ```bash
 # Process all videos in a folder (RunPod optimized)
-python3 tools/preprocess_video.py \
+python3 tools/preprocess.py \
     /workspace/videos \
     -o /workspace/processed_data \
     --resize 1280 720 \
@@ -318,10 +318,10 @@ python3 tools/preprocess_video.py \
 #### Folder-based examples
 ```bash
 # Preprocess a folder of videos at 1280x720 and every frame
-python3 tools/preprocess_video.py /workspace/videos -o /workspace/dataset --resize 1280 720 --extract-every 1
+python3 tools/preprocess.py /workspace/videos -o /workspace/dataset --resize 1280 720 --extract-every 1
 
 # After masking backgrounds, place masked videos in a folder and preprocess
-python3 tools/preprocess_video.py /workspace/videos_masked -o /workspace/dataset_masked --resize 1920 1080
+python3 tools/preprocess.py /workspace/videos_masked -o /workspace/dataset_masked --resize 1920 1080
 ```
 
 ### Training Stage

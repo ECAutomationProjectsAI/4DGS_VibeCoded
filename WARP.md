@@ -24,10 +24,10 @@ pip install gsplat==0.1.11  # CUDA acceleration
 #### 1. Process Videos (Folder) to Dataset
 ```bash
 # Folder of videos (auto camera names from filenames)
-python tools/preprocess_video.py videos/ -o dataset/ --resize 1280 720 --extract-every 1
+python tools/preprocess.py videos/ -o dataset/ --resize 1280 720 --extract-every 1
 
 # With time range and subsampling
-python tools/preprocess_video.py videos/ -o dataset/ --start_frame 0 --end_frame 2000 --extract-every 2
+python tools/preprocess.py videos/ -o dataset/ --start_frame 0 --end_frame 2000 --extract-every 2
 ```
 
 #### 2. Train 4DGS Model

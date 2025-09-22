@@ -46,8 +46,8 @@ def parse_calibration(calib_arg: str) -> dict:
 
 
 def main():
-    print("This script has been deprecated. Please use the multiview preprocessor instead:\n")
-    print("  python3 tools/preprocess_multiview.py /path/to/videos -o /path/to/dataset [--resize W H] [--extract-every N]\n")
+    print("This script has been deprecated. Please use the unified preprocessor instead:\n")
+    print("  python3 tools/preprocess.py /path/to/videos -o /path/to/dataset [--resize W H] [--extract-every N]\n")
     sys.exit(1)
   # Directory of videos
   python3 tools/preprocess_video.py /workspace/videos -o /workspace/dataset \
