@@ -118,7 +118,7 @@ def main():
     parser.add_argument('--end_frame', type=int, default=None, help='End frame index (exclusive)')
     parser.add_argument('--max_memory_gb', type=float, default=-1, help='Maximum RAM for images (-1 for auto 90% of available)')
     parser.add_argument('--memory_fraction', type=float, default=0.90, help='Fraction of available memory to use (0.90 = 90%)')
-    parser.add_argument('--vram_fraction', type=float, default=0.95, help='Fraction of GPU memory to use (0.95 = 95%)')
+    parser.add_argument('--vram_fraction', type=float, default=0.50, help='Fraction of GPU memory to use (default 0.50 = 50%)')
     parser.add_argument('--renderer', type=str, default='fast', choices=['naive','fast'], help='Renderer backend (fast recommended)')
     # Loss weights
     parser.add_argument('--w_ssim', type=float, default=0.2)
@@ -228,9 +228,9 @@ def main():
     
     # Auto-configure max points based on GPU memory
     if args.max_points == -1 and torch.cuda.is_available():
-        # More aggressive: 150k points per GB with 95% VRAM usage
+        # Conservative: 60k points per GB with 50% VRAM usage (by default)
         vram_for_points = available_vram_gb * args.vram_fraction
-        args.max_points = min(int(vram_for_points * 150_000), 2_000_000)  # Cap at 2M points
+        args.max_points = min(int(vram_for_points * 60_000), 800_000)  # Cap at 800k points
         print(f"🔧 Auto-configured max points: {args.max_points:,} (using {vram_for_points:.1f} GB VRAM at {args.vram_fraction*100:.0f}%)")
     elif args.max_points == -1:
         # CPU fallback
@@ -284,12 +284,10 @@ def main():
         print(f"Images tensor size: {images.shape}, dtype: {images.dtype}")
         print(f"Memory usage: {images.element_size() * images.numel() / 1e9:.2f} GB")
         
-        # Move to GPU in chunks if needed
+        # Keep images on CPU to avoid pre-allocating VRAM; move per-frame only
         if device.type == 'cuda':
-            # Don't move all images to GPU at once
             print(f"\nGPU Memory before: {torch.cuda.memory_allocated(device) / 1e9:.2f} GB")
-            images = images.to(device)
-            print(f"GPU Memory after moving images: {torch.cuda.memory_allocated(device) / 1e9:.2f} GB")
+            print("Keeping image tensor on CPU; moving per-frame to GPU during training.")
             
     except Exception as e:
         print(f"\nERROR loading dataset: {e}")
