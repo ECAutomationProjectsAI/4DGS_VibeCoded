@@ -122,6 +122,10 @@ Output structure:
         for p in os.listdir(input_dir)
         if p.lower().endswith(('.mp4', '.mov', '.avi', '.mkv'))
     ])
+    logger.info(f"Scanning directory: {input_dir}")
+    logger.info(f"Found {len(videos)} video file(s)")
+    for v in videos:
+        logger.info(f"  - {os.path.basename(v)}")
     if len(videos) == 0:
         logger.error(f"No videos found in directory: {input_dir}")
         sys.exit(1)
@@ -139,6 +143,7 @@ Output structure:
             end_frame=args.end_frame
         ))
 
+    logger.info(f"Prepared {len(cameras)} camera config(s)")
     # Process multi-camera (folder)
     metadata = processor.process_multi_camera_videos(cameras, sync_method='frame')
 
