@@ -651,7 +651,13 @@ def main():
 
         # Update progress bar with comprehensive metrics
         with torch.no_grad():
-            current_psnr = psnr(img, gt).item()
+            # Match sizes for PSNR in case of warmup downscale
+            gt_for_metrics = gt
+            if img.shape[-2:] != gt.shape[-2:]:
+                gt_for_metrics = torch.nn.functional.interpolate(
+                    gt[None], size=img.shape[-2:], mode='bilinear', align_corners=False
+                )[0]
+            current_psnr = psnr(img, gt_for_metrics).item()
             best_psnr = max(best_psnr, current_psnr)
             loss_history.append(loss.item())
             
