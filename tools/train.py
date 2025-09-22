@@ -6,6 +6,7 @@ import argparse
 import torch
 import numpy as np
 from tqdm import tqdm
+from torch.nn.utils import clip_grad_norm_
 
 # Add parent directory to path to import gs4d module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -98,6 +99,12 @@ def main():
     parser.add_argument('--out_dir', type=str, default='outputs/exp')
     parser.add_argument('--iters', type=int, default=30000, help='Training iterations (more = better quality)')
     parser.add_argument('--lr', type=float, default=1e-2)
+    # Param-group learning rates (stability)
+    parser.add_argument('--lr_pos', type=float, default=1e-4, help='LR for positions (and velocities)')
+    parser.add_argument('--lr_scale', type=float, default=5e-3, help='LR for log_scale/log_scale_t')
+    parser.add_argument('--lr_rot', type=float, default=1e-3, help='LR for quaternions')
+    parser.add_argument('--lr_opa', type=float, default=5e-3, help='LR for opacity logits')
+    parser.add_argument('--lr_sh', type=float, default=1e-2, help='LR for SH coefficients')
     parser.add_argument('--sh_degree', type=int, default=3)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--gpu_id', type=int, default=-1, help='GPU ID to use (-1 for auto-select best GPU)')
@@ -308,7 +315,33 @@ def main():
     model = GaussianModel4D(sh_degree=args.sh_degree, device=device)
     model.init_from_pcd(xyz0.to(device), rgb0.to(device), t0.to(device))
 
-    optim = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # Build param groups for stability
+    p = model.primitive
+    param_groups = []
+    # Positions and velocities
+    pv = []
+    if p._xyz is not None: pv.append(p._xyz)
+    if p._vel is not None: pv.append(p._vel)
+    if len(pv)>0: param_groups.append({'params': pv, 'lr': args.lr_pos})
+    # Scales
+    ps = []
+    if p._log_scale is not None: ps.append(p._log_scale)
+    if p._log_scale_t is not None: ps.append(p._log_scale_t)
+    if len(ps)>0: param_groups.append({'params': ps, 'lr': args.lr_scale})
+    # Rotations
+    prot = []
+    if p._quat is not None: prot.append(p._quat)
+    if len(prot)>0: param_groups.append({'params': prot, 'lr': args.lr_rot})
+    # Opacity
+    popa = []
+    if p._opacity is not None: popa.append(p._opacity)
+    if len(popa)>0: param_groups.append({'params': popa, 'lr': args.lr_opa})
+    # SH
+    psh = []
+    if p._rgb_sh is not None: psh.append(p._rgb_sh)
+    if len(psh)>0: param_groups.append({'params': psh, 'lr': args.lr_sh})
+    
+    optim = torch.optim.Adam(param_groups)
 
     # Buffers for densification
     max_radii2D = torch.zeros(model.primitive._xyz.shape[0], device=device)
@@ -502,6 +535,27 @@ def main():
             optim.zero_grad(set_to_none=True)
             continue
         loss.backward()
+
+        # Per-group gradient clipping
+        with torch.no_grad():
+            # Collect params safely per group
+            def _collect(tlist):
+                out = []
+                for t in tlist:
+                    if t is not None and t.grad is not None:
+                        out.append(t)
+                return out
+            pos_params = _collect([p._xyz, p._vel])
+            scale_params = _collect([p._log_scale, p._log_scale_t])
+            rot_params = _collect([p._quat])
+            opa_params = _collect([p._opacity])
+            sh_params = _collect([p._rgb_sh])
+            # Clip norms
+            if pos_params: clip_grad_norm_(pos_params, max_norm=0.5)
+            if scale_params: clip_grad_norm_(scale_params, max_norm=0.5)
+            if rot_params: clip_grad_norm_(rot_params, max_norm=0.5)
+            if opa_params: clip_grad_norm_(opa_params, max_norm=0.5)
+            if sh_params: clip_grad_norm_(sh_params, max_norm=1.0)
 
         # Densify and prune
         with torch.no_grad():
