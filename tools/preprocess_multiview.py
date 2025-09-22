@@ -320,34 +320,44 @@ class MultiViewPreprocessor:
         # Build quick lookup for metadata by original file path
         meta_by_path = {fr['file_path']: fr for fr in frame_metadata}
         
-        # Prefer iterating over COLMAP images to ensure we add only calibrated frames
+        # Build a per-camera pose map from COLMAP images (assumes static cameras)
+        cam_pose_map = {}
         for image_name, img_data in colmap_data.get('images', {}).items():
-            # Determine original file path
-            if name_map and image_name in name_map:
-                file_path = name_map[image_name]
+            # Infer camera name from image_name: expect it was copied as "{camera}_{basename}"
+            inferred_cam = None
+            if '_' in image_name:
+                inferred_cam = image_name.split('_', 1)[0]
             else:
-                # Fallback: try to match by basename
-                # Find any metadata entry with matching basename
-                matches = [p for p in meta_by_path.keys() if Path(p).name == image_name]
-                if not matches:
-                    continue
-                file_path = matches[0]
-            
-            frame_info = meta_by_path.get(file_path, {})
-            
-            # Convert quaternion and translation to 4x4 matrix
+                # Try alternative delimiters if needed
+                for delim in ['-', ' ']:
+                    if delim in image_name:
+                        inferred_cam = image_name.split(delim, 1)[0]
+                        break
+            if inferred_cam is None:
+                continue
+            # Convert quaternion and translation to c2w
             qw, qx, qy, qz = img_data['quaternion']
             tx, ty, tz = map(float, img_data['translation'])
             R = quaternion_to_matrix(qw, qx, qy, qz)
             c2w = np.eye(4)
             c2w[:3, :3] = R.T
             c2w[:3, 3] = -R.T @ np.array([tx, ty, tz])
-            
+            # Store one pose per camera (first occurrence wins)
+            cam_pose_map.setdefault(inferred_cam, c2w)
+
+        # Now generate a transform entry for every extracted frame, using the camera's pose
+        for fr in frame_metadata:
+            cam = fr.get('camera', 'cam0')
+            if cam not in cam_pose_map:
+                # Skip frames for cameras not calibrated by COLMAP
+                # (fallback will include them later or user can rerun COLMAP)
+                continue
+            c2w = cam_pose_map[cam]
             frame_data = {
-                'file_path': file_path,
+                'file_path': fr['file_path'],
                 'transform_matrix': c2w.tolist(),
-                'time': frame_info.get('time', 0.0),
-                'camera': frame_info.get('camera', 'cam0')
+                'time': fr.get('time', 0.0),
+                'camera': cam
             }
             transforms['frames'].append(frame_data)
         
