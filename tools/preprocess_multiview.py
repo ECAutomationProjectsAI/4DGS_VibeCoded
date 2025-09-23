@@ -1,6 +1,19 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Complete preprocessing pipeline for 4D Gaussian Splatting.
+DEPRECATED: This legacy pipeline has been superseded by the new three-step scripts and gs4d/colmap_utils.
+
+Use these instead (RunPod/Ubuntu only):
+  1) python3 scripts/01_extract_and_map.py /workspace/videos -o /workspace/dataset --resize 1280 720
+  2) python3 scripts/02_calibrate_cameras.py --data_root /workspace/dataset
+  3) python3 scripts/03_train_4dgs.py --data_root /workspace/dataset --out_dir /workspace/outputs/exp
+
+Advanced: For COLMAP SfM utilities, see gs4d/colmap_utils.py.
+"""
+
+if __name__ == '__main__':
+    print(__doc__)
+    import sys
+    sys.exit(1)
 
 This script handles the full data preparation workflow:
 1. Extract frames from multi-view videos (from folder or individual files)

@@ -35,24 +35,12 @@ import logging
 # Add project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools.preprocess_multiview import MultiViewPreprocessor  # reuse its COLMAP runner and parser
+from gs4d.colmap_utils import run_colmap_sfm, parse_colmap_output, quaternion_to_matrix
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
-def quaternion_to_matrix(qw, qx, qy, qz):
-    R = np.zeros((3, 3), dtype=np.float32)
-    R[0, 0] = 1 - 2 * (qy**2 + qz**2)
-    R[0, 1] = 2 * (qx * qy - qz * qw)
-    R[0, 2] = 2 * (qx * qz + qy * qw)
-    R[1, 0] = 2 * (qx * qy + qz * qw)
-    R[1, 1] = 1 - 2 * (qx**2 + qz**2)
-    R[1, 2] = 2 * (qy * qz - qx * qw)
-    R[2, 0] = 2 * (qx * qz - qy * qw)
-    R[2, 1] = 2 * (qy * qz + qx * qw)
-    R[2, 2] = 1 - 2 * (qx**2 + qy**2)
-    return R
 
 
 def main():
@@ -95,22 +83,22 @@ def main():
         sys.exit(1)
     logger.info(f"Prepared {copied} images for COLMAP from {first_group}")
 
-    # Run COLMAP via existing helper
-    pre = MultiViewPreprocessor(
-        output_dir=str(root),
-        skip_colmap=False,
-        colmap_threads=args.threads,
-        colmap_max_image_size=args.max_image_size,
-        colmap_max_num_features=args.max_num_features,
-        colmap_matcher='exhaustive'
+    # Run COLMAP via utility module
+    ok = run_colmap_sfm(
+        image_dir=str(images_dir),
+        colmap_dir=str(colmap_root),
+        camera_model=args.camera_model,
+        threads=args.threads,
+        max_image_size=args.max_image_size,
+        max_num_features=args.max_num_features,
+        matcher='exhaustive',
+        single_camera=False,
     )
-
-    ok = pre.run_colmap_sfm(image_dir=str(images_dir), camera_model=args.camera_model, single_camera=False)
     if not ok:
         logger.error("COLMAP failed. Check logs under data_root/colmap/logs/*.log. You can re-run with simpler model: --camera_model PINHOLE or use --max_image_size 1600")
         sys.exit(1)
 
-    colmap_data = pre.parse_colmap_output()
+    colmap_data = parse_colmap_output(str(colmap_root))
     with open(colmap_root / 'colmap_parsed.json', 'w') as f:
         json.dump(colmap_data, f, indent=2)
 

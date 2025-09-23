@@ -287,45 +287,27 @@ dataset/
 
 ### Quick Start (RunPod/Ubuntu)
 
-- Create a dataset from a folder of videos (resized) and train with safe warmup and fast renderer:
+Use the new three-step scripts only.
 
 ```bash
-# 1) Preprocess (folder of videos)
-python3 tools/preprocess.py /workspace/videos -o /workspace/dataset --resize 1280 720 --extract-every 1
+# 1) Extract and map per-frame-per-camera groups
+python3 scripts/01_extract_and_map.py /workspace/videos \
+  --output /workspace/dataset \
+  --resize 1280 720 \
+  --extract-every 1
 
-# 2) Train (fast CUDA renderer + memory-safe warmup)
-python3 tools/train.py \
+# 2) Calibrate cameras using only the first mapped frame
+python3 scripts/02_calibrate_cameras.py \
+  --data_root /workspace/dataset \
+  --camera_model OPENCV \
+  --threads 8
+
+# 3) Train with memory-safe defaults
+python3 scripts/03_train_4dgs.py \
   --data_root /workspace/dataset \
   --out_dir /workspace/outputs/exp \
   --renderer fast \
-  --iters 30000 \
-  --sh_degree 3 \
-  --warmup_iters 500 \
-  --warmup_points 200000 \
-  --warmup_downscale 2 \
   --w_temporal 0.01
-```
-
-- Multi-view preprocessing and training (cameras auto-named from filenames):
-
-```bash
-# 1) Preprocess (multi-view from folder)
-python3 tools/preprocess.py \
-  /workspace/videos \
-  -o /workspace/dataset \
-  --resize 1920 1080
-
-# 2) Train (larger scenes: stronger warmup)
-python3 tools/train.py \
-  --data_root /workspace/dataset \
-  --out_dir /workspace/outputs/exp_multiview \
-  --renderer fast \
-  --iters 50000 \
-  --sh_degree 3 \
-  --warmup_iters 1000 \
-  --warmup_points 100000 \
-  --warmup_downscale 4 \
-  --w_temporal 0.02
 ```
 
 Optional: If you run other entry points outside this repo, you may set the CUDA allocator to reduce fragmentation:
@@ -336,14 +318,10 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 ### Data Preprocessing Stage
 
-The preprocessing scripts turn videos into a frames/ directory and produce camera intrinsics/extrinsics in transforms.json.
-
-Key options:
-- --resize W H: Downscale frames to reduce GPU memory use during training.
-- --start/--end: Trim the time range for quicker experiments.
-- --extract-every K: Subsample frames to reduce temporal density.
-- Folder-only input: Provide a directory with videos; camera names are derived from filenames.
-- --skip_colmap: Skip COLMAP if it is not available; simple poses will be generated.
+Use the scripts:
+- Step 1 (scripts/01_extract_and_map.py): extract frames and build frames_mapped/ per-frame-per-camera.
+  - Options: --resize W H, --start_frame/--end_frame, --extract-every K
+- Step 2 (scripts/02_calibrate_cameras.py): run COLMAP on only the first mapped frame (static) and generate transforms.json referencing frames_mapped/* for all frames.
 
 #### Multi-View Video Processing (Recommended)
 For best results, use synchronized multi-view capture similar to reference datasets:
@@ -352,21 +330,15 @@ For best results, use synchronized multi-view capture similar to reference datas
 - **Technicolor**: 4×4 array @ 2048×1088
 
 ```bash
-# Process all videos in a folder (RunPod optimized)
-python3 tools/preprocess.py \
-    /workspace/videos \
-    -o /workspace/processed_data \
-    --resize 1280 720 \
-    --extract-every 1
+# Verify mapping and transforms exist, then proceed to training.
+ls /workspace/dataset/frames_mapped
+ls /workspace/dataset/transforms.json
 ```
 
 #### Folder-based examples
 ```bash
-# Preprocess a folder of videos at 1280x720 and every frame
-python3 tools/preprocess.py /workspace/videos -o /workspace/dataset --resize 1280 720 --extract-every 1
-
-# After masking backgrounds, place masked videos in a folder and preprocess
-python3 tools/preprocess.py /workspace/videos_masked -o /workspace/dataset_masked --resize 1920 1080
+# If you prepared masked videos, just point Step 1 to that folder instead of /workspace/videos
+python3 scripts/01_extract_and_map.py /workspace/videos_masked -o /workspace/dataset_masked --resize 1920 1080
 ```
 
 ### Training Stage
