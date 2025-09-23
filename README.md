@@ -4,6 +4,51 @@
 
 4D Gaussian Splatting (4DGS) is a state-of-the-art method for reconstructing and rendering dynamic 3D scenes from video sequences. This implementation integrates cutting-edge techniques from multiple research papers to provide high-quality dynamic scene reconstruction with real-time rendering capabilities.
 
+### New: Three-step pipeline (RunPod/Ubuntu only)
+
+Run this project inside a RunPod/Ubuntu container (Windows is not supported for execution).
+
+1) Extract and map frames (per-frame-per-camera groups):
+```bash
+python3 scripts/01_extract_and_map.py /workspace/videos \
+  --output /workspace/dataset \
+  --resize 1280 720 \
+  --extract-every 1
+```
+
+2) Calibrate cameras with COLMAP (first mapped frame only) and generate transforms.json:
+```bash
+python3 scripts/02_calibrate_cameras.py \
+  --data_root /workspace/dataset \
+  --camera_model OPENCV \
+  --threads 8
+```
+
+3) Train 4D Gaussian Splatting (memory-safe defaults):
+```bash
+python3 scripts/03_train_4dgs.py \
+  --data_root /workspace/dataset \
+  --out_dir /workspace/outputs/exp \
+  --renderer fast \
+  --w_temporal 0.01
+```
+
+4) Export a PLY sequence for playback:
+```bash
+python3 tools/export_ply.py \
+  --ckpt /workspace/outputs/exp/model_final.pt \
+  --output /workspace/exports/sequence \
+  --format ply_sequence \
+  --num_frames 120 \
+  --time_min -0.5 \
+  --time_max 0.5
+```
+
+Notes:
+- Step 2 intentionally uses only the first mapped frame to avoid SfM failure on dynamic content.
+- transforms.json produced in Step 2 references frames_mapped/* and reuses the calibrated per-camera poses for all frames.
+- The legacy unified preprocessor (tools/preprocess.py) remains, but the new three-step scripts are recommended and more robust for multi-view dynamic videos.
+
 ## Key Techniques
 
 Our implementation combines advanced methods from several leading 4DGS papers:

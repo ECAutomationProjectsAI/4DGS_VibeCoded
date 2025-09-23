@@ -268,7 +268,9 @@ def main():
     transforms_path = os.path.join(args.data_root, 'transforms.json')
     if not os.path.exists(transforms_path):
         print(f"ERROR: transforms.json not found in {args.data_root}")
-        print("Please run preprocessing first: python tools/preprocess_video.py")
+        print("Please run preprocessing first:")
+        print("  1) python3 scripts/01_extract_and_map.py /workspace/videos -o /workspace/dataset --resize 1280 720")
+        print("  2) python3 scripts/02_calibrate_cameras.py --data_root /workspace/dataset")
         sys.exit(1)
 
     # Load sequence with memory limits

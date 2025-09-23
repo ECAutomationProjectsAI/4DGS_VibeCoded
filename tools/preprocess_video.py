@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
-"""Preprocess a folder of videos for 4D Gaussian Splatting training.
+"""
+DEPRECATED: This script has been replaced by the new three-step pipeline.
 
-- Input: a directory containing videos (mp4, mov, avi, mkv)
+Use these instead (RunPod/Ubuntu only):
+  1) python3 scripts/01_extract_and_map.py /workspace/videos -o /workspace/dataset --resize 1280 720
+  2) python3 scripts/02_calibrate_cameras.py --data_root /workspace/dataset
+  3) python3 scripts/03_train_4dgs.py --data_root /workspace/dataset --out_dir /workspace/outputs/exp
+"""
+
+import sys
+if __name__ == '__main__':
+    print(__doc__)
+    sys.exit(1)
 - Cameras are auto-named using the video filenames (without extensions)
 - Outputs frames/ subfolders per camera and a transforms.json for training
 
