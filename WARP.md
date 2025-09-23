@@ -23,11 +23,11 @@ pip install gsplat==0.1.11  # CUDA acceleration
 
 #### 1. Process Videos (Folder) to Dataset
 ```bash
-# Folder of videos (auto camera names from filenames)
-python tools/preprocess.py videos/ -o dataset/ --resize 1280 720 --extract-every 1
+# 1) Extract and map per-frame-per-camera
+python scripts/01_extract_and_map.py videos/ -o dataset/ --resize 1280 720 --extract-every 1
 
 # With time range and subsampling
-python tools/preprocess.py videos/ -o dataset/ --start_frame 0 --end_frame 2000 --extract-every 2
+python scripts/01_extract_and_map.py videos/ -o dataset/ --start_frame 0 --end_frame 2000 --extract-every 2
 ```
 
 #### 2. Train 4DGS Model
@@ -81,7 +81,9 @@ docker build -t gs4d:latest .
 # Run with GPU support
 ```bash
 docker run --gpus all -v $(pwd)/videos:/videos -v $(pwd)/output:/output gs4d:latest \
-  python3 /workspace/tools/preprocess_video.py /videos -o /output/dataset/
+  python3 /workspace/scripts/01_extract_and_map.py /videos -o /output/dataset/ --resize 1280 720 && \
+  python3 /workspace/scripts/02_calibrate_cameras.py --data_root /output/dataset/ && \
+  python3 /workspace/scripts/03_train_4dgs.py --data_root /output/dataset/ --out_dir /output/model
 
 # Docker Compose
 docker-compose up

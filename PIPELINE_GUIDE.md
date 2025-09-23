@@ -38,12 +38,11 @@ Multi-View Videos → Frame Extraction → Camera Calibration → 4DGS Training 
 #### Step 2.1: Multi-View Video Processing (Folder)
 
 ```bash
-python tools/preprocess.py \
-    data/videos \
-    -o processed_data \
-    --resize 1920 1080 \
-    --extract-every 1 \
-    --use-gpu
+# Step 1: Extract and map per-frame-per-camera
+python scripts/01_extract_and_map.py data/videos -o processed_data --resize 1920 1080 --extract-every 1
+
+# Step 2: Calibrate cameras from first mapped frame
+python scripts/02_calibrate_cameras.py --data_root processed_data --camera_model OPENCV --threads 8
 ```
 
 **What happens:**
@@ -298,32 +297,20 @@ Rendered frames as image sequence or video file:
 ## Example End-to-End Pipeline
 
 ```bash
-# 1. Preprocess videos (folder)
-python tools/preprocess.py \
-    data/videos \
-    -o processed \
-    --resize 1280 720 \
-    --extract-every 1 \
-    --use-gpu
+# 1. Extract and map per-frame-per-camera
+python scripts/01_extract_and_map.py data/videos -o processed --resize 1280 720 --extract-every 1
 
-# 2. Train model
-python tools/train.py \
-    --data_root processed \
-    --out_dir model \
-    --iters 30000
+# 2. Calibrate cameras (first mapped frame)
+python scripts/02_calibrate_cameras.py --data_root processed --camera_model OPENCV --threads 8
 
-# 3. Export for viewing
-python tools/export_ply.py \
-    --ckpt model/ckpt_final.pt \
-    --output exports/sequence \
-    --format ply_sequence \
-    --num_frames 100
+# 3. Train model
+python scripts/03_train_4dgs.py --data_root processed --out_dir model --renderer fast --w_temporal 0.01
 
-# 4. Render video
-python tools/render.py \
-    --data_root processed \
-    --ckpt model/ckpt_final.pt \
-    --out_dir renders
+# 4. Export for viewing
+python tools/export_ply.py --ckpt model/model_final.pt --output exports/sequence --format ply_sequence --num_frames 100
+
+# 5. Render video
+python tools/render.py --data_root processed --ckpt model/model_final.pt --out_dir renders
 ```
 
 ## References

@@ -48,7 +48,6 @@ setup(
         "console_scripts": [
             "gs4d-train=tools.train:main",
             "gs4d-render=tools.render:main",
-            "gs4d-preprocess=tools.preprocess_video:main",
             "gs4d-convert=tools.convert:main",
             "gs4d-evaluate=tools.evaluate:main",
         ],

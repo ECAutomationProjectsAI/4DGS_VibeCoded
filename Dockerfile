@@ -34,10 +34,11 @@ RUN pip3 install --no-cache-dir gsplat==0.1.11
 # Copy project
 COPY . /workspace
 
-# Ensure tools are executable
-RUN chmod +x /workspace/tools/*.py || true
+# Ensure tools and scripts are executable
+RUN chmod +x /workspace/tools/*.py || true && \
+    chmod +x /workspace/scripts/*.py || true
 
 ENV PYTHONPATH=/workspace
 
 # Default command for RunPod
-CMD ["bash", "-c", "echo '4DGS RunPod Container Ready!' && echo '' && echo 'Environment: Ubuntu 22.04 with PyTorch 2.8.0 + CUDA 12.8' && echo '' && echo 'Available tools:' && echo '  - preprocess.py: Process a folder of videos' && echo '  - train.py: Train 4DGS models' && echo '  - render.py: Render trained models' && echo '  - export_ply.py: Export to PLY format' && echo '' && echo 'Example usage:' && echo '  python3 tools/preprocess.py /videos -o /data' && echo '  python3 tools/train.py --data_root /data --out_dir /model' && echo ''"]
+CMD ["bash", "-c", "echo '4DGS RunPod Container Ready!' && echo '' && echo 'Environment: Ubuntu 22.04 with PyTorch 2.8.0 + CUDA 12.8' && echo '' && echo 'Available commands:' && echo '  - scripts/01_extract_and_map.py: Extract frames and map per-frame-per-camera' && echo '  - scripts/02_calibrate_cameras.py: COLMAP calibration from first mapped frame' && echo '  - scripts/03_train_4dgs.py: Train 4D Gaussian Splatting' && echo '  - tools/render.py: Render trained models' && echo '  - tools/export_ply.py: Export to PLY format' && echo '' && echo 'Example usage:' && echo '  python3 scripts/01_extract_and_map.py /videos -o /data --resize 1280 720' && echo '  python3 scripts/02_calibrate_cameras.py --data_root /data' && echo '  python3 scripts/03_train_4dgs.py --data_root /data --out_dir /model' && echo ''"]

@@ -47,7 +47,6 @@ python3 tools/export_ply.py \
 Notes:
 - Step 2 intentionally uses only the first mapped frame to avoid SfM failure on dynamic content.
 - transforms.json produced in Step 2 references frames_mapped/* and reuses the calibrated per-camera poses for all frames.
-- The legacy unified preprocessor (tools/preprocess.py) remains, but the new three-step scripts are recommended and more robust for multi-view dynamic videos.
 
 ## Key Techniques
 
