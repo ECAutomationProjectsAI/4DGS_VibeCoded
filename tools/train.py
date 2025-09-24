@@ -351,38 +351,42 @@ def main():
         ddp_primitive = None
         densify_enabled = True
 
+    # Utility: build optimizer param groups from primitive
+    def build_optimizer_from_primitive(primitive):
+        param_groups = []
+        # Positions and velocities
+        pv = []
+        if primitive._xyz is not None: pv.append(primitive._xyz)
+        if primitive._vel is not None: pv.append(primitive._vel)
+        if len(pv)>0: param_groups.append({'params': pv, 'lr': args.lr_pos})
+        # Scales
+        ps = []
+        if primitive._log_scale is not None: ps.append(primitive._log_scale)
+        if primitive._log_scale_t is not None: ps.append(primitive._log_scale_t)
+        if len(ps)>0: param_groups.append({'params': ps, 'lr': args.lr_scale})
+        # Rotations
+        prot = []
+        if primitive._quat is not None: prot.append(primitive._quat)
+        if len(prot)>0: param_groups.append({'params': prot, 'lr': args.lr_rot})
+        # Opacity
+        popa = []
+        if primitive._opacity is not None: popa.append(primitive._opacity)
+        if len(popa)>0: param_groups.append({'params': popa, 'lr': args.lr_opa})
+        # SH
+        psh = []
+        if primitive._rgb_sh is not None: psh.append(primitive._rgb_sh)
+        if len(psh)>0: param_groups.append({'params': psh, 'lr': args.lr_sh})
+        return torch.optim.Adam(param_groups)
+
     # Build param groups for stability
     p = (ddp_primitive if ddp_primitive is not None else model.primitive)
-    param_groups = []
-    # Positions and velocities
-    pv = []
-    if p._xyz is not None: pv.append(p._xyz)
-    if p._vel is not None: pv.append(p._vel)
-    if len(pv)>0: param_groups.append({'params': pv, 'lr': args.lr_pos})
-    # Scales
-    ps = []
-    if p._log_scale is not None: ps.append(p._log_scale)
-    if p._log_scale_t is not None: ps.append(p._log_scale_t)
-    if len(ps)>0: param_groups.append({'params': ps, 'lr': args.lr_scale})
-    # Rotations
-    prot = []
-    if p._quat is not None: prot.append(p._quat)
-    if len(prot)>0: param_groups.append({'params': prot, 'lr': args.lr_rot})
-    # Opacity
-    popa = []
-    if p._opacity is not None: popa.append(p._opacity)
-    if len(popa)>0: param_groups.append({'params': popa, 'lr': args.lr_opa})
-    # SH
-    psh = []
-    if p._rgb_sh is not None: psh.append(p._rgb_sh)
-    if len(psh)>0: param_groups.append({'params': psh, 'lr': args.lr_sh})
-    
-    optim = torch.optim.Adam(param_groups)
+    optim = build_optimizer_from_primitive(p)
 
     # Buffers for densification
-    max_radii2D = torch.zeros(model.primitive._xyz.shape[0], device=device)
-    grad_accum = torch.zeros(model.primitive._xyz.shape[0], device=device)
-    vis_count = torch.zeros(model.primitive._xyz.shape[0], device=device)
+    current_primitive = (model.module.primitive if use_ddp else model.primitive)
+    max_radii2D = torch.zeros(current_primitive._xyz.shape[0], device=device)
+    grad_accum = torch.zeros(current_primitive._xyz.shape[0], device=device)
+    vis_count = torch.zeros(current_primitive._xyz.shape[0], device=device)
 
     # SH growth
     active_sh_degree = min(0, args.sh_degree)
@@ -660,17 +664,38 @@ def main():
 
                 # Clone top-k ratio by accumulated grad
                 N = model.xyz.shape[0]
+                added = 0
                 if N > 0:
                     k = max(1, int(args.densify_topk_ratio * N))
                     vals, idxs = torch.topk(grad_accum[:N], k)
                     clone_mask = torch.zeros(N, dtype=torch.bool, device=device)
                     clone_mask[idxs] = True
-                    if clone_mask.any():
-                        model.densify_clone(clone_mask)
-                        added = int(clone_mask.sum().item())
-                        max_radii2D = torch.cat([max_radii2D, torch.zeros(added, device=device)], dim=0)
-                        grad_accum = torch.cat([grad_accum, torch.zeros(added, device=device)], dim=0)
-                        vis_count = torch.cat([vis_count, torch.zeros(added, device=device)], dim=0)
+
+                    if use_ddp:
+                        # Master performs densify; broadcast new state
+                        compact_state = None
+                        if is_master and clone_mask.any():
+                            model.module.densify_clone(clone_mask)
+                            added = int(clone_mask.sum().item())
+                            compact_state = model.module.state_dict_compact()
+                        obj_list = [compact_state]
+                        dist.broadcast_object_list(obj_list, src=0)
+                        compact_state = obj_list[0]
+                        if not is_master and compact_state is not None:
+                            model.module.load_state_dict_compact(compact_state)
+                        # Rebuild optimizer and buffers to match new N
+                        p_prim = model.module.primitive
+                        optim = build_optimizer_from_primitive(p_prim)
+                        max_radii2D = torch.zeros(p_prim._xyz.shape[0], device=device)
+                        grad_accum = torch.zeros(p_prim._xyz.shape[0], device=device)
+                        vis_count = torch.zeros(p_prim._xyz.shape[0], device=device)
+                    else:
+                        if clone_mask.any():
+                            model.densify_clone(clone_mask)
+                            added = int(clone_mask.sum().item())
+                            max_radii2D = torch.cat([max_radii2D, torch.zeros(added, device=device)], dim=0)
+                            grad_accum = torch.cat([grad_accum, torch.zeros(added, device=device)], dim=0)
+                            vis_count = torch.cat([vis_count, torch.zeros(added, device=device)], dim=0)
                     grad_accum[:N] *= 0.0
                     vis_count[:N] *= 0.0
 
@@ -681,10 +706,27 @@ def main():
                 prune_mask = (opa < args.prune_opacity_thresh) & small & lowvis
                 if prune_mask.any():
                     keep = ~prune_mask
-                    model.prune(keep)
-                    max_radii2D = max_radii2D[keep]
-                    grad_accum = grad_accum[keep]
-                    vis_count = vis_count[keep]
+                    if use_ddp:
+                        compact_state = None
+                        if is_master:
+                            model.module.prune(keep)
+                            compact_state = model.module.state_dict_compact()
+                        obj_list = [compact_state]
+                        dist.broadcast_object_list(obj_list, src=0)
+                        compact_state = obj_list[0]
+                        if not is_master and compact_state is not None:
+                            model.module.load_state_dict_compact(compact_state)
+                        # Rebuild optimizer and buffers after prune
+                        p_prim = model.module.primitive
+                        optim = build_optimizer_from_primitive(p_prim)
+                        max_radii2D = max_radii2D[keep]
+                        grad_accum = grad_accum[keep]
+                        vis_count = vis_count[keep]
+                    else:
+                        model.prune(keep)
+                        max_radii2D = max_radii2D[keep]
+                        grad_accum = grad_accum[keep]
+                        vis_count = vis_count[keep]
 
             if it % args.opacity_reset_interval == 0 and it < args.densify_until_iter:
                 # Reset opacity towards mid-range to allow further growth
