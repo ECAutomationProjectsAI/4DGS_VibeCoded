@@ -306,8 +306,18 @@ def main():
             start_frame=args.start_frame,
             end_frame=args.end_frame
         )
-        F, C, H, W = images.shape
-        print(f"\nSuccessfully loaded {F} frames, resolution: {W}x{H}")
+        F_total, C, H, W = images.shape
+        # Build multi-view groups by frame_idx
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for i, cinfo in enumerate(cams):
+            fid = int(cinfo.get('frame_idx', i))
+            groups[fid].append(i)
+        group_keys = sorted(groups.keys())
+        G = len(group_keys)
+        avg_views = sum(len(groups[k]) for k in group_keys) / max(1, G)
+        print(f"\nSuccessfully loaded {F_total} images across {G} time steps, avg views/time: {avg_views:.2f}")
+        print(f"Resolution: {W}x{H}")
         print(f"Images tensor size: {images.shape}, dtype: {images.dtype}")
         print(f"Memory usage: {images.element_size() * images.numel() / 1e9:.2f} GB")
         
@@ -513,52 +523,76 @@ def main():
             pass
         optim.zero_grad()
         _clamp_model_sanity()
-        # Pick a random frame (offset by rank in DDP to reduce overlap)
-        base_idx = torch.randint(0, F, (1,), device=device).item() if torch.cuda.is_available() else torch.randint(0, F, (1,)).item()
-        if use_ddp:
-            fidx = (base_idx + global_rank) % F
-        else:
-            fidx = base_idx
-        gt = images[fidx].to(device)
-        K = cams[fidx]['K'].to(device)
-        R = cams[fidx]['R'].to(device)
-        tt = cams[fidx]['t'].to(device)
-        time = float(times[fidx, 0].item())
-        mk = masks[fidx].to(device) if masks is not None else None
+        # Pick a random time group (offset by rank in DDP to reduce overlap)
+        base_gid = torch.randint(0, G, (1,), device=device).item() if torch.cuda.is_available() else int(np.random.randint(0, G))
+        gid = (base_gid + global_rank) % G if use_ddp else base_gid
+        group_key = group_keys[gid]
+        view_indices = groups[group_key]
 
-        # Viewing direction approximated as pointing towards camera center in world coordinates
-        cam_pos = (-R.T @ tt).to(device)  # c2w translation
-        dirs = (cam_pos[None, :] - model.xyz)
-        dirs = dirs / (dirs.norm(dim=-1, keepdim=True) + 1e-6)  # [N,3]
-
-        # Use time-dependent positions x(t) = x + v * t
+        # Use time-dependent positions x(t) = x + v * t (same for all views in group)
+        time = float(times[view_indices[0], 0].item())
         xyz_t = model.position_at_time(time)
-        img, a, d, used = _render_with_guard(xyz_t, dirs, K, R, tt, H, W, time, active_sh_degree, it)
-        if not torch.isfinite(img).all():
-            print(f"\n❌ Non-finite image tensor right after rendering (mode={used}). Recovering…")
-            pruned = _prune_nonfinite_gaussians(model)
-            new_lr = _reduce_lr(optim, factor=0.5)
-            print(f"   - Pruned invalid Gaussians: {pruned}")
-            print(f"   - Reduced learning rate to: {new_lr:.2e}")
+
+        # Aggregate multi-view losses
+        per_view_losses = []
+        psnrs = []
+        # For densify/prune heuristics, we will compute vis with the first view later
+        for vi in view_indices:
+            gt = images[vi].to(device)
+            K = cams[vi]['K'].to(device)
+            R = cams[vi]['R'].to(device)
+            tt = cams[vi]['t'].to(device)
+            mk = masks[vi].to(device) if masks is not None else None
+
+            # Viewing direction approximated as pointing towards camera center in world coordinates
+            cam_pos = (-R.T @ tt).to(device)  # c2w translation
+            dirs = (cam_pos[None, :] - model.xyz)
+            dirs = dirs / (dirs.norm(dim=-1, keepdim=True) + 1e-6)  # [N,3]
+
+            img, a, d, used = _render_with_guard(xyz_t, dirs, K, R, tt, H, W, time, active_sh_degree, it)
+            if not torch.isfinite(img).all():
+                print(f"\n❌ Non-finite image tensor (mode={used}) in group {gid}. Recovering…")
+                pruned = _prune_nonfinite_gaussians(model)
+                new_lr = _reduce_lr(optim, factor=0.5)
+                print(f"   - Pruned invalid Gaussians: {pruned}")
+                print(f"   - Reduced learning rate to: {new_lr:.2e}")
+                per_view_losses = []
+                break
+
+            # Losses (use L1-only during warmup, matching resolution)
+            if it <= args.warmup_iters and args.warmup_downscale > 1:
+                Hs, Ws = img.shape[-2], img.shape[-1]
+                gt_small = torch.nn.functional.interpolate(gt[None], size=(Hs, Ws), mode='bilinear', align_corners=False)[0]
+                L_l1 = l1_loss(img, gt_small)
+            else:
+                L_l1 = l1_loss(img, gt)
+            if it <= args.warmup_iters:
+                L_ssim = 0.0
+                L_total = L_l1
+            else:
+                L_ssim = 1.0 - ssim(img, gt)
+                L_total = (1.0 - args.w_ssim) * L_l1 + args.w_ssim * L_ssim
+
+            if mk is not None and args.w_opa_mask > 0:
+                sky = (1.0 - (mk>0.5).float())  # 1 for background
+                o = a.clamp(1e-6, 1-1e-6)
+                L_opa = (- sky * torch.log(1 - o)).mean()
+                L_total = L_total + args.w_opa_mask * L_opa
+
+            per_view_losses.append(L_total)
+            # PSNR for logging (match sizes)
+            gt_for_metrics = gt
+            if img.shape[-2:] != gt.shape[-2:]:
+                gt_for_metrics = torch.nn.functional.interpolate(gt[None], size=img.shape[-2:], mode='bilinear', align_corners=False)[0]
+            psnrs.append(psnr(img, gt_for_metrics).item())
+
+        if len(per_view_losses) == 0:
             optim.zero_grad(set_to_none=True)
             continue
-
-        # Losses (use L1-only during warmup, matching resolution)
-        if it <= args.warmup_iters and args.warmup_downscale > 1:
-            Hs, Ws = img.shape[-2], img.shape[-1]
-            gt_small = torch.nn.functional.interpolate(gt[None], size=(Hs, Ws), mode='bilinear', align_corners=False)[0]
-            L_l1 = l1_loss(img, gt_small)
-        else:
-            L_l1 = l1_loss(img, gt)
-        if it <= args.warmup_iters:
-            L_ssim = 0.0
-            loss = L_l1
-        else:
-            L_ssim = 1.0 - ssim(img, gt)
-            loss = (1.0 - args.w_ssim) * L_l1 + args.w_ssim * L_ssim
+        loss = torch.stack(per_view_losses).mean()
 
         # NaN/Inf watchdog before backward
-        if _nan_inf_found(loss, img, model.xyz, model.scales, model.opacity):
+        if _nan_inf_found(loss, model.xyz, model.scales, model.opacity):
             print(f"\n❌ Detected non-finite values at iter {it}. Engaging recovery…")
             pruned = _prune_nonfinite_gaussians(model)
             new_lr = _reduce_lr(optim, factor=0.5)
@@ -642,11 +676,15 @@ def main():
         # Densify and prune
         with torch.no_grad():
             # Update max_radii2D approx from current r_pix computation
-            # recompute r_pix
+            # recompute r_pix using the first view in the current group
             # Rough 2D footprint size from scale and depth (same as renderer)
             uv, z, _ = None, None, None
-            # quick recompute inline (duplicated logic minimal):
-            Xc = (R @ model.xyz.T).T + tt[None]
+            # quick recompute inline using first view of the group
+            vi0 = view_indices[0]
+            R0 = cams[vi0]['R'].to(device)
+            t0c = cams[vi0]['t'].to(device)
+            Xc = (R0 @ model.xyz.T).T + t0c[None]
+            
             z = Xc[:, 2].clamp(min=1e-6)
             fx = K[0,0]; fy = K[1,1]
             r_pix = 0.5 * (fx * model.scales[:,0] / z + fy * model.scales[:,1] / z)
@@ -736,18 +774,12 @@ def main():
 
         # Update progress bar with comprehensive metrics
         with torch.no_grad():
-            # Match sizes for PSNR in case of warmup downscale
-            gt_for_metrics = gt
-            if img.shape[-2:] != gt.shape[-2:]:
-                gt_for_metrics = torch.nn.functional.interpolate(
-                    gt[None], size=img.shape[-2:], mode='bilinear', align_corners=False
-                )[0]
-            current_psnr = psnr(img, gt_for_metrics).item()
+            current_psnr = float(np.mean(psnrs)) if len(psnrs)>0 else 0.0
             best_psnr = max(best_psnr, current_psnr)
             loss_history.append(loss.item())
             
             # Memory monitoring every 100 iterations
-            if it % 100 == 0 and device.type == 'cuda':
+            if is_master and it % 100 == 0 and device.type == 'cuda':
                 current_vram = torch.cuda.memory_allocated(device) / 1e9
                 vram_percent = (current_vram / total_vram_gb) * 100
                 
@@ -764,14 +796,16 @@ def main():
                     'PSNR': f'{current_psnr:.2f}',
                     'Best': f'{best_psnr:.2f}',
                     'Points': f'{model.xyz.shape[0]:,}',
+                    'Views': f'{len(view_indices)}',
                     'VRAM': f'{current_vram:.1f}GB ({vram_percent:.0f}%)'
                 })
-            else:
+            elif is_master:
                 pbar.set_postfix({
                     'Loss': f'{loss.item():.4f}',
                     'PSNR': f'{current_psnr:.2f}',
                     'Best': f'{best_psnr:.2f}',
-                    'Points': f'{model.xyz.shape[0]:,}'
+                    'Points': f'{model.xyz.shape[0]:,}',
+                    'Views': f'{len(view_indices)}'
                 })
 
         # SH growth

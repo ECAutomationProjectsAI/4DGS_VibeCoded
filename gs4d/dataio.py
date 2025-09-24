@@ -209,6 +209,8 @@ def load_sequence(root: str,
             't': torch.from_numpy(t),
             'H': H,
             'W': W,
+            'frame_idx': int(fr.get('frame_idx', i)),
+            'camera': fr.get('camera', 'cam0'),
         })
         times.append(fr.get('time', i))
         if masks is not None:
