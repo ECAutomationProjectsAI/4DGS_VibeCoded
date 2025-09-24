@@ -6,6 +6,8 @@ import argparse
 # Reduce CUDA memory fragmentation during long-running splat loops
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
 from tqdm import tqdm
 from torch.nn.utils import clip_grad_norm_
@@ -110,6 +112,9 @@ def main():
     parser.add_argument('--sh_degree', type=int, default=3)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--gpu_id', type=int, default=-1, help='GPU ID to use (-1 for auto-select best GPU)')
+    # Multi-GPU (DDP)
+    parser.add_argument('--ddp', action='store_true', help='Enable single-node multi-GPU training with torchrun')
+    parser.add_argument('--dist_backend', type=str, default='nccl')
     parser.add_argument('--save_every', type=int, default=500)
     parser.add_argument('--validate_every', type=int, default=100)
     parser.add_argument('--seed', type=int, default=42)
@@ -154,34 +159,49 @@ def main():
     print("           4D Gaussian Splatting Training")
     print("="*60)
     
-    # Auto-detect and configure GPU
+    # DDP init (single-node multi-GPU)
+    env_local_rank = int(os.environ.get('LOCAL_RANK', '-1'))
+    use_ddp = bool(args.ddp or env_local_rank >= 0)
+    local_rank = env_local_rank if env_local_rank >= 0 else 0
+    global_rank = int(os.environ.get('RANK', '0'))
+    world_size = int(os.environ.get('WORLD_SIZE', '1'))
+    
     if torch.cuda.is_available():
         num_gpus = torch.cuda.device_count()
-        
-        if args.gpu_id == -1:
-            # Auto-select GPU with most free memory
-            best_gpu = 0
-            best_free_mem = 0
-            
-            for i in range(num_gpus):
-                torch.cuda.set_device(i)
-                free_mem, _ = torch.cuda.mem_get_info(i)
-                if free_mem > best_free_mem:
-                    best_free_mem = free_mem
-                    best_gpu = i
-            
-            args.gpu_id = best_gpu
-            torch.cuda.set_device(args.gpu_id)
-            print(f"\n🚀 Auto-selected GPU {args.gpu_id}: {torch.cuda.get_device_name(args.gpu_id)}")
+        if use_ddp:
+            # In DDP mode we respect torchrun's LOCAL_RANK
+            if env_local_rank < 0:
+                # Fallback: map gpu_id or 0
+                local_rank = args.gpu_id if args.gpu_id >= 0 else 0
+            torch.cuda.set_device(local_rank)
+            if not dist.is_initialized():
+                dist.init_process_group(backend=args.dist_backend, init_method='env://', world_size=world_size, rank=global_rank)
+            print(f"\n🧩 DDP enabled | rank {global_rank}/{world_size-1}, local_rank={local_rank}, device={torch.cuda.get_device_name(local_rank)}")
+            # Update available VRAM for this device
+            free_vram, total_vram = torch.cuda.mem_get_info(local_rank)
+            available_vram_gb = free_vram / (1024**3)
+            total_vram_gb = total_vram / (1024**3)
+            args.gpu_id = local_rank
         else:
-            # Use specified GPU
-            torch.cuda.set_device(args.gpu_id)
-            print(f"\n🎯 Using specified GPU {args.gpu_id}: {torch.cuda.get_device_name(args.gpu_id)}")
-        
-        # Update available VRAM for the selected GPU
-        free_vram, total_vram = torch.cuda.mem_get_info(args.gpu_id)
-        available_vram_gb = free_vram / (1024**3)
-        total_vram_gb = total_vram / (1024**3)
+            # Single-GPU selection
+            if args.gpu_id == -1:
+                best_gpu = 0
+                best_free_mem = 0
+                for i in range(num_gpus):
+                    torch.cuda.set_device(i)
+                    free_mem, _ = torch.cuda.mem_get_info(i)
+                    if free_mem > best_free_mem:
+                        best_free_mem = free_mem
+                        best_gpu = i
+                args.gpu_id = best_gpu
+                torch.cuda.set_device(args.gpu_id)
+                print(f"\n🚀 Auto-selected GPU {args.gpu_id}: {torch.cuda.get_device_name(args.gpu_id)}")
+            else:
+                torch.cuda.set_device(args.gpu_id)
+                print(f"\n🎯 Using specified GPU {args.gpu_id}: {torch.cuda.get_device_name(args.gpu_id)}")
+            free_vram, total_vram = torch.cuda.mem_get_info(args.gpu_id)
+            available_vram_gb = free_vram / (1024**3)
+            total_vram_gb = total_vram / (1024**3)
     else:
         print("\n⚠️  No GPU available, using CPU (will be slow)")
     
@@ -257,7 +277,10 @@ def main():
     seed_everything(args.seed)
     device = torch.device(f'cuda:{args.gpu_id}' if torch.cuda.is_available() else 'cpu')
 
-    ensure_dir(args.out_dir)
+    # Only rank 0 writes outputs in DDP
+    is_master = (not use_ddp) or (global_rank == 0)
+
+    ensure_dir(args.out_dir if is_master else args.out_dir)
     
     print("\nLoading dataset...")
     # Check if data exists
@@ -319,8 +342,17 @@ def main():
     model = GaussianModel4D(sh_degree=args.sh_degree, device=device)
     model.init_from_pcd(xyz0.to(device), rgb0.to(device), t0.to(device))
 
+    # Wrap with DDP if enabled (disable densify/prune in DDP to keep param shapes stable)
+    if use_ddp and torch.cuda.is_available():
+        model = DDP(model.to(device), device_ids=[args.gpu_id], output_device=args.gpu_id, broadcast_buffers=False, find_unused_parameters=False)
+        ddp_primitive = model.module.primitive
+        densify_enabled = False
+    else:
+        ddp_primitive = None
+        densify_enabled = True
+
     # Build param groups for stability
-    p = model.primitive
+    p = (ddp_primitive if ddp_primitive is not None else model.primitive)
     param_groups = []
     # Positions and velocities
     pv = []
@@ -440,7 +472,7 @@ def main():
                 )
             return img_w, a_w, d_w, 'warmup-naive'
         # Try fast renderer first after warmup
-        if args.renderer == 'fast':
+    if args.renderer == 'fast':
             try:
                 outputs = renderer(
                     positions=xyz_t,
@@ -453,12 +485,13 @@ def main():
                     camera_intrinsics=K
                 )
                 img_fast = outputs['rgb'].permute(2, 0, 1)
-                if torch.isfinite(img_fast).all():
+                # Ensure differentiability and finiteness
+                if torch.isfinite(img_fast).all() and img_fast.requires_grad:
                     a_fast = outputs.get('visibility', torch.ones(H, W, device=device))
                     d_fast = torch.zeros(H, W, device=device)
                     return img_fast, a_fast, d_fast, 'fast'
                 else:
-                    print("\n⚠️ Fast renderer produced non-finite values; falling back to naive for this iter")
+                    print("\n⚠️ Fast renderer non-finite or non-differentiable; falling back to naive for this iter")
             except Exception as e:
                 print(f"\n⚠️ Fast renderer exception: {e}. Falling back to naive for this iter")
         # Naive fallback: start circular; if stable later we can enable elliptical automatically
@@ -468,12 +501,20 @@ def main():
         )
         return img_n, a_n, d_n, 'naive'
 
-    pbar = tqdm(range(1, args.iters + 1), desc='Training', unit='iter')
-    for it in pbar:
+    iter_range = range(1, args.iters + 1)
+    pbar = tqdm(iter_range, desc='Training', unit='iter') if is_master else iter_range
+    for it in iter_range:
+        if is_master:
+            # Update pbar externally via set_postfix below
+            pass
         optim.zero_grad()
         _clamp_model_sanity()
-        # Pick a random frame
-        fidx = torch.randint(0, F, (1,)).item()
+        # Pick a random frame (offset by rank in DDP to reduce overlap)
+        base_idx = torch.randint(0, F, (1,), device=device).item() if torch.cuda.is_available() else torch.randint(0, F, (1,)).item()
+        if use_ddp:
+            fidx = (base_idx + global_rank) % F
+        else:
+            fidx = base_idx
         gt = images[fidx].to(device)
         K = cams[fidx]['K'].to(device)
         R = cams[fidx]['R'].to(device)
@@ -607,7 +648,7 @@ def main():
             r_pix = 0.5 * (fx * model.scales[:,0] / z + fy * model.scales[:,1] / z)
             max_radii2D = torch.maximum(max_radii2D, r_pix)
 
-            if it > args.warmup_iters and args.densify_from_iter <= it <= args.densify_until_iter and it % args.densification_interval == 0:
+            if densify_enabled and it > args.warmup_iters and args.densify_from_iter <= it <= args.densify_until_iter and it % args.densification_interval == 0:
                 # Approximate visibility and accumulate gradient
                 x = Xc[:,0] / z; y = Xc[:,1] / z
                 uv = torch.stack([(K[0,0]*x + K[0,2]), (K[1,1]*y + K[1,2])], dim=-1)
@@ -695,10 +736,10 @@ def main():
         if args.sh_degree > 0 and it % args.sh_increase_interval == 0 and it > args.warmup_iters:
             active_sh_degree = min(args.sh_degree, active_sh_degree + 1)
 
-        if it % args.save_every == 0:
-            torch.save({'state': model.state_dict_compact()}, os.path.join(args.out_dir, f'model_{it}.pt'))
+        if is_master and it % args.save_every == 0:
+            torch.save({'state': (model.module if use_ddp else model).state_dict_compact()}, os.path.join(args.out_dir, f'model_{it}.pt'))
 
-        if it % args.validate_every == 0:
+        if is_master and it % args.validate_every == 0:
             # quick validation on first frame
             with torch.no_grad():
                 K0 = cams[0]['K'].to(device)
@@ -717,11 +758,17 @@ def main():
                 imageio.imwrite(os.path.join(args.out_dir, f'val_{it:05d}.png'), image_np)
 
     # Final export
-    torch.save({'state': model.state_dict_compact()}, os.path.join(args.out_dir, f'model_final.pt'))
+    # Synchronize before final save
+    if use_ddp and dist.is_initialized():
+        dist.barrier()
+
+    if is_master:
+        torch.save({'state': (model.module if use_ddp else model).state_dict_compact()}, os.path.join(args.out_dir, f'model_final.pt'))
     
-    # Training summary
-    print("\n" + "="*60)
-    print("✅ Training Completed Successfully!")
+    # Training summary (master only)
+    if is_master:
+        print("\n" + "="*60)
+        print("✅ Training Completed Successfully!")
     print("="*60)
     print(f"\n📊 Final Statistics:")
     print(f"   Total iterations: {args.iters:,}")
@@ -731,22 +778,24 @@ def main():
         print(f"   Final loss: {loss_history[-1]:.4f}")
         print(f"   Average loss: {np.mean(loss_history):.4f}")
     
-    if device.type == 'cuda':
+    if is_master and device.type == 'cuda':
         final_vram = torch.cuda.memory_allocated(device) / 1e9
         print(f"\n💾 Memory Usage:")
         print(f"   Peak VRAM: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
         print(f"   Final VRAM: {final_vram:.2f} GB")
     
-    print(f"\n📂 Output Files:")
-    print(f"   Model saved to: {os.path.join(args.out_dir, 'model_final.pt')}")
-    checkpoint_files = [f for f in os.listdir(args.out_dir) if f.startswith('model_') and f.endswith('.pt')]
-    print(f"   Checkpoints saved: {len(checkpoint_files)}")
+    if is_master:
+        print(f"\n📂 Output Files:")
+        print(f"   Model saved to: {os.path.join(args.out_dir, 'model_final.pt')}")
+        checkpoint_files = [f for f in os.listdir(args.out_dir) if f.startswith('model_') and f.endswith('.pt')]
+        print(f"   Checkpoints saved: {len(checkpoint_files)}")
     
-    print(f"\n🎯 Next Steps:")
-    print(f"   1. Render results: python tools/render.py --data_root {args.data_root} --ckpt {os.path.join(args.out_dir, 'model_final.pt')} --out_dir renders/")
-    print(f"   2. Evaluate quality: python tools/evaluate.py --data_root {args.data_root} --renders_dir renders/")
-    print(f"   3. Create video: python tools/create_video.py --input_dir renders/ --output video.mp4")
-    print("\n" + "="*60)
+    if is_master:
+        print(f"\n🎯 Next Steps:")
+        print(f"   1. Render results: python tools/render.py --data_root {args.data_root} --ckpt {os.path.join(args.out_dir, 'model_final.pt')} --out_dir renders/")
+        print(f"   2. Evaluate quality: python tools/evaluate.py --data_root {args.data_root} --renders_dir renders/")
+        print(f"   3. Create video: python tools/create_video.py --input_dir renders/ --output video.mp4")
+        print("\n" + "="*60)
 
 
 if __name__ == '__main__':
