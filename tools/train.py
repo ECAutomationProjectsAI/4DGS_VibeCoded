@@ -476,7 +476,7 @@ def main():
                 )
             return img_w, a_w, d_w, 'warmup-naive'
         # Try fast renderer first after warmup
-    if args.renderer == 'fast':
+        if args.renderer == 'fast':
             try:
                 outputs = renderer(
                     positions=xyz_t,
