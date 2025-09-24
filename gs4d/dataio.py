@@ -46,11 +46,14 @@ def load_sequence(root: str,
     """
     Expect structure:
     root/
-      frames/
-        00000.png (or jpg)
+      frames_mapped/frame000001/camA.jpg ...
+      mapping.json (groups with per-frame-per-camera images)
       transforms.json with fields:
-        frames: [ {file_path, transform_matrix (c2w)}, ... ]
-        fl_x, fl_y, cx, cy, h, w
+        Either:
+          - frames: [ {file_path, transform_matrix (c2w)}, ... ]  (legacy)
+        Or (compact, preferred):
+          - cameras: { cam_name: { transform_matrix } }
+          - intrinsics: fl_x, fl_y, cx, cy, h, w at top-level
     
     Args:
         root: Dataset root directory
@@ -81,7 +84,34 @@ def load_sequence(root: str,
     cx, cy = float(meta['cx']), float(meta['cy'])
 
     K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
-    frames = meta['frames']
+
+    # Build frames list: prefer compact (mapping.json + per-camera pose) if available
+    frames = []
+    mapping_path = os.path.join(root, 'mapping.json')
+    if os.path.isfile(mapping_path) and 'cameras' in meta and ('frames' not in meta or len(meta.get('frames', [])) == 0):
+        with open(mapping_path, 'r') as f:
+            mapping = json.load(f)
+        cam_poses = {k: np.array(v['transform_matrix'], dtype=np.float32) for k, v in meta['cameras'].items()}
+        groups = mapping.get('groups', [])
+        # Build per-image entries from mapping using per-camera pose
+        fps = 30.0  # nominal, only used for relative times and normalized later
+        for gi, group in enumerate(groups, start=1):
+            abs_idx = int(group.get('index', gi))
+            t = abs_idx / fps
+            images = group.get('images', {})
+            for cam, rel_path in images.items():
+                if cam not in cam_poses:
+                    continue
+                frames.append({
+                    'file_path': rel_path,
+                    'transform_matrix': cam_poses[cam].tolist(),
+                    'time': t,
+                    'camera': cam,
+                    'frame_idx': abs_idx
+                })
+    else:
+        # Legacy path: use frames array from transforms.json
+        frames = meta['frames']
 
     # Strict frame range filtering if requested
     if start_frame is not None or end_frame is not None:

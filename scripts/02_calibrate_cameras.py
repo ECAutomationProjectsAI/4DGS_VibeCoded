@@ -150,9 +150,9 @@ def main():
         # derive from cam_pose_map
         camera_names = sorted(list(cam_pose_map.keys()))
 
-    # Compose transforms.json referencing frames_mapped/* with static per-camera poses
+    # Compose compact transforms.json: store intrinsics once and per-camera pose only.
+    # Training/data loader will combine this with mapping.json to enumerate all frames.
     transforms = {
-        'frames': [],
         'camera_angle_x': 2.0 * float(np.arctan(width / (2.0 * fx))),
         'fl_x': fx,
         'fl_y': fy,
@@ -163,41 +163,17 @@ def main():
         'aabb_scale': 4,
         'scale': 1.0,
         'offset': [0.5, 0.5, 0.5],
+        'cameras': {}
     }
 
-    # Build frames entries: iterate groups in order, assign monotonically increasing time based on group index
-    groups = mapping.get('groups', [])
-    if not groups:
-        logger.error("No groups found in mapping.json. Step 1 mapping failed?")
-        sys.exit(1)
-
-    # Normalize time to seconds using a nominal fps=30 to keep relative timing; Loaders will re-normalize anyway
-    fps = 30.0
-    gmin = groups[0]['index']; gmax = groups[-1]['index']
-    for gi, group in enumerate(groups, start=1):
-        abs_idx = int(group['index'])
-        # approximate time in seconds from absolute index
-        t = abs_idx / fps
-        for cam in sorted(camera_names):
-            rel_path = group['images'].get(cam)
-            if rel_path is None:
-                # skip if this camera missing in this group (should not happen for valid mapping)
-                continue
-            c2w = cam_pose_map.get(cam)
-            if c2w is None:
-                # camera not calibrated -> skip
-                continue
-            transforms['frames'].append({
-                'file_path': rel_path,
-                'transform_matrix': c2w.tolist(),
-                'time': t,
-                'camera': cam,
-                'frame_idx': abs_idx
-            })
-
-    if not transforms['frames']:
-        logger.error("No frames added to transforms.json. Check that camera names from COLMAP match mapping.json")
-        sys.exit(1)
+    # Save per-camera c2w from COLMAP first-frame calibration
+    for cam in sorted(camera_names):
+        c2w = cam_pose_map.get(cam)
+        if c2w is None:
+            continue
+        transforms['cameras'][cam] = {
+            'transform_matrix': c2w.tolist()
+        }
 
     out_path = root / 'transforms.json'
     with open(out_path, 'w') as f:
